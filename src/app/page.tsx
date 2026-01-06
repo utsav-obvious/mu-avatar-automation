@@ -4,14 +4,15 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { extractProperNouns, ExtractedNoun } from "@/actions/extraction-actions";
+import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2 } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw } from "lucide-react";
 
 export default function AudioAuditDashboard() {
   const [script, setScript] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedNouns, setExtractedNouns] = useState<ExtractedNoun[]>([]);
+  const [isRegenerating, setIsRegenerating] = useState<Record<number, boolean>>({});
 
   const handleAnalyze = async () => {
     if (!script.trim()) {
@@ -29,6 +30,23 @@ export default function AudioAuditDashboard() {
       toast.error("Failed to analyze script. Please check your Gemini API key.");
     } finally {
       setIsAnalyzing(false);
+    }
+  };
+
+  const handleRegenerate = async (index: number) => {
+    const noun = extractedNouns[index];
+    setIsRegenerating(prev => ({ ...prev, [index]: true }));
+
+    try {
+      const newVariations = await regenerateNounVariations(noun.original, noun.context, noun.variations);
+      const updatedNouns = [...extractedNouns];
+      updatedNouns[index] = { ...noun, variations: [...noun.variations, ...newVariations] };
+      setExtractedNouns(updatedNouns);
+      toast.success("Added 3 new variations.");
+    } catch (error) {
+      toast.error("Failed to generate more variations.");
+    } finally {
+      setIsRegenerating(prev => ({ ...prev, [index]: false }));
     }
   };
 
@@ -94,22 +112,63 @@ export default function AudioAuditDashboard() {
                       <CardTitle className="text-2xl font-bold tracking-tight text-white group-hover:text-indigo-400 transition-colors">
                         {noun.original}
                       </CardTitle>
-                      <CheckCircle2 className="w-6 h-6 text-slate-700 group-hover:text-slate-600" />
+                      <CheckCircle2 className="w-6 h-6 text-slate-700 group-hover:text-slate-600 transition-colors" />
                     </div>
                   </CardHeader>
-                  <CardContent className="pt-4">
-                    <p className="text-slate-400 leading-relaxed italic border-l-2 border-indigo-500/30 pl-4 py-1">
+                  <CardContent className="pt-4 space-y-6">
+                    <p className="text-sm text-slate-400 leading-relaxed italic border-l-2 border-indigo-500/30 pl-4 py-1">
                       "{noun.context}"
                     </p>
-                    <div className="mt-8 flex flex-col gap-3">
-                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-slate-500" />
-                        Next Step: Variation Auditing
-                      </label>
-                      <div className="h-32 w-full bg-slate-950/50 rounded-xl border border-dashed border-slate-800 flex flex-col items-center justify-center text-sm text-slate-600 gap-2">
-                        <Music className="w-5 h-5 opacity-20" />
-                        <span>Milestone 3: Phonetic Variations</span>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                          <Music className="w-3 h-3" />
+                          Phonetic Variations (AI)
+                        </label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-[10px] text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                          onClick={() => handleRegenerate(index)}
+                          disabled={isRegenerating[index]}
+                        >
+                          {isRegenerating[index] ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                          Next 3
+                        </Button>
                       </div>
+                      <div className="flex flex-wrap gap-2 max-h-[120px] overflow-y-auto pr-2 custom-scrollbar">
+                        {noun.variations.map((variant, vIndex) => (
+                          <div
+                            key={vIndex}
+                            className="px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-sm font-medium text-indigo-300 hover:bg-indigo-500/20 transition-colors cursor-pointer"
+                          >
+                            {variant}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <label className="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center gap-2">
+                        <Search className="w-3 h-3" />
+                        Manual Override
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Type custom respelling..."
+                          className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+                        />
+                        <Button variant="outline" size="sm" className="border-slate-800 hover:bg-slate-800 h-9">
+                          Update
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800/50 flex items-center justify-between text-[10px] font-bold uppercase tracking-[0.2em] text-slate-600">
+                      <span>Milestone 3: Generation Active</span>
+                      <CheckCircle2 className="w-4 h-4 text-slate-800" />
                     </div>
                   </CardContent>
                 </Card>
