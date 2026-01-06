@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, generateContextAudio } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText } from "lucide-react";
 
 interface AuditState extends ExtractedNoun {
   selectedVariation?: string;
@@ -21,6 +21,64 @@ export default function AudioAuditDashboard() {
   const [isRegenerating, setIsRegenerating] = useState<Record<number, boolean>>({});
   const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" } | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
+  const [finalScript, setFinalScript] = useState<string | null>(null);
+  const [isPlayingFinal, setIsPlayingFinal] = useState(false);
+
+  const generateAuditedScript = () => {
+    let audited = script;
+    // Sort by length descending to avoid partial replacements
+    const sortedNouns = [...extractedNouns].sort((a, b) => b.original.length - a.original.length);
+
+    sortedNouns.forEach(noun => {
+      // Use selected variation if available, otherwise original
+      const replacement = noun.selectedVariation || noun.original;
+
+      // Escape special characters
+      const escapedNoun = noun.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+      // If it's English/Alphanumeric, use word boundaries. 
+      // If it has non-Latin characters (like Hindi), skip \b as it doesn't work correctly.
+      const isAlphanumeric = /^[a-z0-9\s]+$/i.test(noun.original);
+      const regex = new RegExp(isAlphanumeric ? `\\b${escapedNoun}\\b` : escapedNoun, "giu");
+
+      audited = audited.replace(regex, replacement);
+    });
+
+    setFinalScript(audited);
+    toast.success("Final script prepared!");
+  };
+
+  const handlePlayFinalAudio = async () => {
+    if (!finalScript) return;
+
+    if (isPlayingFinal) {
+      stopAudio();
+      setIsPlayingFinal(false);
+      return;
+    }
+
+    setIsPlayingFinal(true);
+    try {
+      const audioData = await generateVariationAudio(finalScript);
+      const audio = new Audio(audioData);
+      setAudioElement(audio);
+      audio.play();
+      audio.onended = () => {
+        setIsPlayingFinal(false);
+        setAudioElement(null);
+      };
+    } catch (error) {
+      toast.error("Failed to generate final audio. Script might be too long.");
+      setIsPlayingFinal(false);
+    }
+  };
+
+  const copyToClipboard = () => {
+    if (finalScript) {
+      navigator.clipboard.writeText(finalScript);
+      toast.success("Copied to clipboard!");
+    }
+  };
 
   const handleAnalyze = async () => {
     if (!script.trim()) {
@@ -94,6 +152,7 @@ export default function AudioAuditDashboard() {
     const updatedNouns = [...extractedNouns];
     updatedNouns[index] = { ...updatedNouns[index], selectedVariation: variation };
     setExtractedNouns(updatedNouns);
+    setFinalScript(null); // Force re-generate to see changes
     toast.success(`Selected "${variation}" for ${updatedNouns[index].original}`);
   };
 
@@ -286,7 +345,9 @@ export default function AudioAuditDashboard() {
                                 return;
                               }
                               // Use the sentence context instead of the whole script to save tokens
-                              const regex = new RegExp(`\\b${noun.original}\\b`, "g");
+                              const escapedNoun = noun.original.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                              const isAlphanumeric = /^[a-z0-9\s]+$/i.test(noun.original);
+                              const regex = new RegExp(isAlphanumeric ? `\\b${escapedNoun}\\b` : escapedNoun, "giu");
                               const contextText = noun.context.replace(regex, noun.selectedVariation!);
                               handlePlay(contextText, index, "context");
                             }}
@@ -352,6 +413,75 @@ export default function AudioAuditDashboard() {
                 </Card>
               ))}
             </div>
+
+            {/* Export Section */}
+            <section className="pt-12 space-y-6">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">3</div>
+                <h2 className="text-xl font-semibold">Review & Export</h2>
+              </div>
+
+              {!finalScript ? (
+                <Card className="bg-slate-900 border-indigo-500/10 p-12 text-center border-dashed border-2 rounded-3xl">
+                  <FileText className="w-12 h-12 text-slate-700 mx-auto mb-4" />
+                  <p className="text-slate-500 mb-6">Audited nouns will be replaced. Others will use original text.</p>
+                  <Button
+                    onClick={generateAuditedScript}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-8"
+                  >
+                    Generate Final Script
+                  </Button>
+                </Card>
+              ) : (
+                <Card className="bg-slate-900 border-indigo-500/30 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+                  <div className="bg-indigo-500/5 px-6 py-4 border-b border-indigo-500/10 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-indigo-400" />
+                      <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">Final Audited Script</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={copyToClipboard}>
+                        <Copy className="w-3.5 h-3.5 mr-2" />
+                        Copy text
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={() => {
+                        setFinalScript(null);
+                        setIsPlayingFinal(false);
+                        stopAudio();
+                      }}>
+                        Reset
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="p-8 space-y-6">
+                    <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 text-lg leading-relaxed text-slate-300 whitespace-pre-wrap font-serif min-h-[150px]">
+                      {finalScript}
+                    </div>
+
+                    <Button
+                      onClick={handlePlayFinalAudio}
+                      disabled={isPlayingFinal && !audioElement}
+                      className={`w-full h-14 rounded-2xl text-lg font-bold transition-all gap-3 shadow-xl ${isPlayingFinal
+                        ? "bg-red-500/10 border border-red-500/50 text-red-400 hover:bg-red-500/20"
+                        : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
+                        }`}
+                    >
+                      {isPlayingFinal ? (
+                        <>
+                          <Pause className="w-6 h-6 fill-current" />
+                          Stop Playback
+                        </>
+                      ) : (
+                        <>
+                          <Music className="w-6 h-6" />
+                          Generate & Play Final Audio
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </Card>
+              )}
+            </section>
           </section>
         ) : !isAnalyzing && (
           <div className="flex flex-col items-center justify-center py-24 text-slate-600 border-2 border-dashed border-slate-900 rounded-3xl">

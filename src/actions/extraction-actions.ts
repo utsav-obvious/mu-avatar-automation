@@ -26,7 +26,11 @@ export async function extractProperNouns(script: string): Promise<ExtractedNoun[
 
     const prompt = `
     Extract all proper nouns (Names, Places, Organizations, Acronyms) from the text.
-    For each noun, provide its context and generate 3 phonetic variations optimized for ElevenLabs TTS using these techniques:
+    For each noun, provide its context and generate 3 phonetic variations optimized for ElevenLabs TTS.
+    
+    IMPORTANT: The "original" field MUST be the exact literal spelling as found in the text (don't correct capitalization or spelling in the "original" field).
+    
+    Techniques for variations:
     1. Phonetic Respelling (e.g., Ramesh -> Ruh-mesh)
     2. Schwa Removal (e.g., Vikram -> Vik-ram)
     3. Aspiration Control (e.g., Bhagat -> Bhaa-gut)
