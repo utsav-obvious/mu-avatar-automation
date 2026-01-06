@@ -19,7 +19,7 @@ export default function AudioAuditDashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedNouns, setExtractedNouns] = useState<AuditState[]>([]);
   const [isRegenerating, setIsRegenerating] = useState<Record<number, boolean>>({});
-  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" } | null>(null);
+  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" } | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   const handleAnalyze = async () => {
@@ -66,7 +66,7 @@ export default function AudioAuditDashboard() {
     setPlayingAudio(null);
   };
 
-  const handlePlay = async (text: string, index: number, vIndex: number | "manual") => {
+  const handlePlay = async (text: string, index: number, vIndex: number | "manual" | "context") => {
     if (playingAudio?.index === index && playingAudio?.vIndex === vIndex) {
       stopAudio();
       return;
@@ -189,15 +189,15 @@ export default function AudioAuditDashboard() {
                           <div
                             key={vIndex}
                             className={`flex items-center justify-between p-2 rounded-xl border transition-all cursor-pointer group/item ${noun.selectedVariation === variant
-                                ? "bg-indigo-500/20 border-indigo-500/50"
-                                : "bg-slate-950/50 border-slate-800 hover:border-slate-700"
+                              ? "bg-indigo-500/20 border-indigo-500/50"
+                              : "bg-slate-950/50 border-slate-800 hover:border-slate-700"
                               }`}
                             onClick={() => handleSelect(index, variant)}
                           >
                             <div className="flex items-center gap-3">
                               <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${noun.selectedVariation === variant
-                                  ? "bg-indigo-500 border-indigo-500 text-white"
-                                  : "border-slate-700 text-transparent group-hover/item:border-slate-500"
+                                ? "bg-indigo-500 border-indigo-500 text-white"
+                                : "border-slate-700 text-transparent group-hover/item:border-slate-500"
                                 }`}>
                                 <Check className="w-3 h-3" />
                               </div>
@@ -228,15 +228,77 @@ export default function AudioAuditDashboard() {
 
                       {/* Play in Context Button */}
                       {noun.selectedVariation && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full mt-2 h-9 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700 gap-2 bg-slate-900/50"
-                          onClick={() => handlePlay(script.replace(noun.original, noun.selectedVariation!), index, "manual")}
-                        >
-                          <Play className="w-3 h-3" />
-                          Listen in Context
-                        </Button>
+                        <div className="space-y-4 pt-4 border-t border-slate-800/50">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-2">
+                              <Search className="w-3 h-3" />
+                              Context Debug Toolbar
+                            </label>
+                            <span className="text-[10px] text-slate-500 italic">Fine-tune prosody</span>
+                          </div>
+
+                          <div className="grid grid-cols-3 gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={`h-8 text-[10px] border-slate-800 gap-1.5 transition-all ${noun.selectedVariation.includes("...") ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-300" : "text-slate-500 hover:text-slate-300"}`}
+                              onClick={() => {
+                                const variant = noun.selectedVariation!;
+                                const updated = variant.includes("...") ? variant.replace(/\.\.\./g, "") : `... ${variant} ...`;
+                                handleSelect(index, updated);
+                              }}
+                            >
+                              Pause (...)
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={`h-8 text-[10px] border-slate-800 gap-1.5 transition-all ${noun.selectedVariation.includes(" — ") ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-300" : "text-slate-500 hover:text-slate-300"}`}
+                              onClick={() => {
+                                const variant = noun.selectedVariation!;
+                                const updated = variant.includes(" — ") ? variant.replace(/ — /g, "") : ` — ${variant} — `;
+                                handleSelect(index, updated);
+                              }}
+                            >
+                              Stress ( — )
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className={`h-8 text-[10px] border-slate-800 gap-1.5 transition-all ${noun.selectedVariation === noun.selectedVariation?.toUpperCase() ? "bg-indigo-500/10 border-indigo-500/30 text-indigo-300" : "text-slate-500 hover:text-slate-300"}`}
+                              onClick={() => {
+                                const variant = noun.selectedVariation!;
+                                const updated = variant === variant.toUpperCase() ? variant.toLowerCase() : variant.toUpperCase();
+                                handleSelect(index, updated);
+                              }}
+                            >
+                              Force CAPS
+                            </Button>
+                          </div>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={`w-full h-10 border-indigo-500/20 gap-2 bg-slate-900 shadow-lg shadow-indigo-500/5 group transition-all ${playingAudio?.index === index && playingAudio?.vIndex === "context" ? "text-white border-indigo-500 bg-indigo-500/10" : "text-indigo-300 hover:text-white hover:bg-indigo-500/10"}`}
+                            onClick={() => {
+                              if (playingAudio?.index === index && playingAudio?.vIndex === "context") {
+                                stopAudio();
+                                return;
+                              }
+                              // Use the sentence context instead of the whole script to save tokens
+                              const regex = new RegExp(`\\b${noun.original}\\b`, "g");
+                              const contextText = noun.context.replace(regex, noun.selectedVariation!);
+                              handlePlay(contextText, index, "context");
+                            }}
+                          >
+                            {playingAudio?.index === index && playingAudio?.vIndex === "context" ? (
+                              <Pause className="w-4 h-4 fill-current animate-pulse" />
+                            ) : (
+                              <Music className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                            )}
+                            {playingAudio?.index === index && playingAudio?.vIndex === "context" ? "Playing Context..." : "Listen in Context"}
+                          </Button>
+                        </div>
                       )}
                     </div>
 
