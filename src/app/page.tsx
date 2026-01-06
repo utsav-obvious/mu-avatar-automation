@@ -5,14 +5,22 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
+import { generateVariationAudio, generateContextAudio } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check } from "lucide-react";
+
+interface AuditState extends ExtractedNoun {
+  selectedVariation?: string;
+  customVariation?: string;
+}
 
 export default function AudioAuditDashboard() {
   const [script, setScript] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [extractedNouns, setExtractedNouns] = useState<ExtractedNoun[]>([]);
+  const [extractedNouns, setExtractedNouns] = useState<AuditState[]>([]);
   const [isRegenerating, setIsRegenerating] = useState<Record<number, boolean>>({});
+  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" } | null>(null);
+  const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
 
   const handleAnalyze = async () => {
     if (!script.trim()) {
@@ -27,7 +35,7 @@ export default function AudioAuditDashboard() {
       toast.success(`Successfully extracted ${nouns.length} proper nouns.`);
     } catch (error) {
       console.error(error);
-      toast.error("Failed to analyze script. Please check your Gemini API key.");
+      toast.error("Failed to analyze script.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -48,6 +56,45 @@ export default function AudioAuditDashboard() {
     } finally {
       setIsRegenerating(prev => ({ ...prev, [index]: false }));
     }
+  };
+
+  const stopAudio = () => {
+    if (audioElement) {
+      audioElement.pause();
+      setAudioElement(null);
+    }
+    setPlayingAudio(null);
+  };
+
+  const handlePlay = async (text: string, index: number, vIndex: number | "manual") => {
+    if (playingAudio?.index === index && playingAudio?.vIndex === vIndex) {
+      stopAudio();
+      return;
+    }
+
+    stopAudio();
+    setPlayingAudio({ index, vIndex });
+
+    try {
+      const audioData = await generateVariationAudio(text);
+      const audio = new Audio(audioData);
+      setAudioElement(audio);
+      audio.play();
+      audio.onended = () => {
+        setPlayingAudio(null);
+        setAudioElement(null);
+      };
+    } catch (error) {
+      toast.error("Failed to play audio.");
+      setPlayingAudio(null);
+    }
+  };
+
+  const handleSelect = (index: number, variation: string) => {
+    const updatedNouns = [...extractedNouns];
+    updatedNouns[index] = { ...updatedNouns[index], selectedVariation: variation };
+    setExtractedNouns(updatedNouns);
+    toast.success(`Selected "${variation}" for ${updatedNouns[index].original}`);
   };
 
   return (
@@ -137,16 +184,60 @@ export default function AudioAuditDashboard() {
                           Next 3
                         </Button>
                       </div>
-                      <div className="flex flex-wrap gap-2 max-h-[120px] overflow-y-auto pr-2 custom-scrollbar">
+                      <div className="flex flex-col gap-2 max-h-[200px] overflow-y-auto pr-2 custom-scrollbar">
                         {noun.variations.map((variant, vIndex) => (
                           <div
                             key={vIndex}
-                            className="px-3 py-1.5 bg-indigo-500/10 border border-indigo-500/20 rounded-lg text-sm font-medium text-indigo-300 hover:bg-indigo-500/20 transition-colors cursor-pointer"
+                            className={`flex items-center justify-between p-2 rounded-xl border transition-all cursor-pointer group/item ${noun.selectedVariation === variant
+                                ? "bg-indigo-500/20 border-indigo-500/50"
+                                : "bg-slate-950/50 border-slate-800 hover:border-slate-700"
+                              }`}
+                            onClick={() => handleSelect(index, variant)}
                           >
-                            {variant}
+                            <div className="flex items-center gap-3">
+                              <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${noun.selectedVariation === variant
+                                  ? "bg-indigo-500 border-indigo-500 text-white"
+                                  : "border-slate-700 text-transparent group-hover/item:border-slate-500"
+                                }`}>
+                                <Check className="w-3 h-3" />
+                              </div>
+                              <span className={`text-sm font-medium ${noun.selectedVariation === variant ? "text-white" : "text-slate-300"}`}>
+                                {variant}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-slate-500 hover:text-indigo-400"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handlePlay(variant, index, vIndex);
+                                }}
+                              >
+                                {playingAudio?.index === index && playingAudio?.vIndex === vIndex ? (
+                                  <Pause className="w-4 h-4 fill-current" />
+                                ) : (
+                                  <Play className="w-4 h-4 fill-current" />
+                                )}
+                              </Button>
+                            </div>
                           </div>
                         ))}
                       </div>
+
+                      {/* Play in Context Button */}
+                      {noun.selectedVariation && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full mt-2 h-9 border-slate-800 text-slate-400 hover:text-white hover:border-slate-700 gap-2 bg-slate-900/50"
+                          onClick={() => handlePlay(script.replace(noun.original, noun.selectedVariation!), index, "manual")}
+                        >
+                          <Play className="w-3 h-3" />
+                          Listen in Context
+                        </Button>
+                      )}
                     </div>
 
                     <div className="space-y-3">
@@ -159,9 +250,34 @@ export default function AudioAuditDashboard() {
                           type="text"
                           placeholder="Type custom respelling..."
                           className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500 transition-all"
+                          value={noun.customVariation || ""}
+                          onChange={(e) => {
+                            const updatedNouns = [...extractedNouns];
+                            updatedNouns[index] = { ...updatedNouns[index], customVariation: e.target.value };
+                            setExtractedNouns(updatedNouns);
+                          }}
                         />
-                        <Button variant="outline" size="sm" className="border-slate-800 hover:bg-slate-800 h-9">
-                          Update
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="border-slate-800 hover:bg-slate-800 h-9"
+                          onClick={() => noun.customVariation && handleSelect(index, noun.customVariation)}
+                          disabled={!noun.customVariation}
+                        >
+                          Select
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-slate-500 hover:text-indigo-400 border border-slate-800"
+                          onClick={() => noun.customVariation && handlePlay(noun.customVariation, index, "manual")}
+                          disabled={!noun.customVariation}
+                        >
+                          {playingAudio?.index === index && playingAudio?.vIndex === "manual" ? (
+                            <Pause className="w-4 h-4 fill-current" />
+                          ) : (
+                            <Play className="w-4 h-4 fill-current" />
+                          )}
                         </Button>
                       </div>
                     </div>
