@@ -7,7 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, generateContextAudio } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2 } from "lucide-react";
+import { Slider } from "@/components/ui/slider";
+import { useRef, useEffect } from "react";
+import { saveAuditSession, listAuditSessions, getAuditSession, deleteAuditSession, AuditSession } from "@/actions/storage-actions";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+  SheetDescription
+} from "@/components/ui/sheet";
 
 interface AuditState extends ExtractedNoun {
   selectedVariation?: string;
@@ -23,6 +34,82 @@ export default function AudioAuditDashboard() {
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [finalScript, setFinalScript] = useState<string | null>(null);
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
+
+  // Storage State
+  const [sessions, setSessions] = useState<{ id: string, name: string, timestamp: string }[]>([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+
+  // Advanced Audio Player State
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playbackRate, setPlaybackRate] = useState(1.25);
+  const finalAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (finalAudioRef.current) {
+      finalAudioRef.current.playbackRate = playbackRate;
+    }
+  }, [playbackRate]);
+
+  // Load history list when sheet opens
+  useEffect(() => {
+    if (isHistoryOpen) {
+      listAuditSessions().then(setSessions);
+    }
+  }, [isHistoryOpen]);
+
+  const handleSaveSession = async () => {
+    if (extractedNouns.length === 0) return;
+
+    const id = currentSessionId || `audit-${Date.now()}`;
+    const name = extractedNouns.slice(0, 3).map(n => n.original).join(", ") + (extractedNouns.length > 3 ? "..." : "");
+
+    const session: AuditSession = {
+      id,
+      name: name || "Untitled Audit",
+      timestamp: new Date().toISOString(),
+      originalScript: script,
+      extractedNouns,
+      finalScript: finalScript || undefined
+    };
+
+    try {
+      await saveAuditSession(session);
+      setCurrentSessionId(id);
+      toast.success("Audit session saved to local JSON.");
+    } catch (error) {
+      toast.error("Failed to save session.");
+    }
+  };
+
+  const handleLoadSession = async (id: string) => {
+    try {
+      const session = await getAuditSession(id);
+      if (session) {
+        setScript(session.originalScript);
+        setExtractedNouns(session.extractedNouns);
+        setFinalScript(session.finalScript || null);
+        setCurrentSessionId(session.id);
+        setIsHistoryOpen(false);
+        toast.success(`Loaded session: ${session.name}`);
+      }
+    } catch (error) {
+      toast.error("Failed to load session.");
+    }
+  };
+
+  const handleDeleteSession = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    try {
+      await deleteAuditSession(id);
+      setSessions(prev => prev.filter(s => s.id !== id));
+      if (currentSessionId === id) setCurrentSessionId(null);
+      toast.success("Session deleted.");
+    } catch (error) {
+      toast.error("Failed to delete session.");
+    }
+  };
 
   const generateAuditedScript = () => {
     let audited = script;
@@ -48,12 +135,31 @@ export default function AudioAuditDashboard() {
     toast.success("Final script prepared!");
   };
 
+  const stopAudio = () => {
+    if (audioElement) {
+      audioElement.pause();
+      setAudioElement(null);
+    }
+    if (finalAudioRef.current) {
+      finalAudioRef.current.pause();
+      setIsPlayingFinal(false);
+    }
+    setPlayingAudio(null);
+  };
+
   const handlePlayFinalAudio = async () => {
     if (!finalScript) return;
 
-    if (isPlayingFinal) {
-      stopAudio();
+    if (isPlayingFinal && finalAudioRef.current) {
+      finalAudioRef.current.pause();
       setIsPlayingFinal(false);
+      return;
+    }
+
+    if (finalAudioRef.current && finalAudioRef.current.src) {
+      // Resume if already loaded
+      finalAudioRef.current.play();
+      setIsPlayingFinal(true);
       return;
     }
 
@@ -61,15 +167,40 @@ export default function AudioAuditDashboard() {
     try {
       const audioData = await generateVariationAudio(finalScript);
       const audio = new Audio(audioData);
-      setAudioElement(audio);
-      audio.play();
+      audio.playbackRate = playbackRate;
+
+      audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
+      audio.onloadedmetadata = () => setDuration(audio.duration);
       audio.onended = () => {
         setIsPlayingFinal(false);
-        setAudioElement(null);
+        setCurrentTime(0);
       };
+
+      finalAudioRef.current = audio;
+      audio.play();
     } catch (error) {
       toast.error("Failed to generate final audio. Script might be too long.");
       setIsPlayingFinal(false);
+    }
+  };
+
+  const formatTime = (time: number) => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  const handleDownloadAudio = () => {
+    if (finalAudioRef.current && finalAudioRef.current.src) {
+      const link = document.createElement("a");
+      link.href = finalAudioRef.current.src;
+      link.download = `audited-script-${currentSessionId || Date.now()}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success("Downloading audio...");
+    } else {
+      toast.error("Please generate the audio first.");
     }
   };
 
@@ -77,6 +208,14 @@ export default function AudioAuditDashboard() {
     if (finalScript) {
       navigator.clipboard.writeText(finalScript);
       toast.success("Copied to clipboard!");
+    }
+  };
+
+  const skip10 = (forward: boolean) => {
+    if (finalAudioRef.current) {
+      const newTime = finalAudioRef.current.currentTime + (forward ? 10 : -10);
+      finalAudioRef.current.currentTime = Math.max(0, Math.min(newTime, duration));
+      setCurrentTime(finalAudioRef.current.currentTime);
     }
   };
 
@@ -116,13 +255,6 @@ export default function AudioAuditDashboard() {
     }
   };
 
-  const stopAudio = () => {
-    if (audioElement) {
-      audioElement.pause();
-      setAudioElement(null);
-    }
-    setPlayingAudio(null);
-  };
 
   const handlePlay = async (text: string, index: number, vIndex: number | "manual" | "context") => {
     if (playingAudio?.index === index && playingAudio?.vIndex === vIndex) {
@@ -165,6 +297,87 @@ export default function AudioAuditDashboard() {
             Audio Audit
           </h1>
           <p className="text-slate-400">Pronunciation Auditing Tool for ElevenLabs</p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" className="border-slate-800 text-slate-400 hover:text-white gap-2 rounded-xl h-10">
+                <History className="w-4 h-4" />
+                History
+              </Button>
+            </SheetTrigger>
+            <SheetContent className="bg-slate-950 border-slate-800 text-slate-100 w-[400px] sm:w-[540px]">
+              <SheetHeader className="mb-8">
+                <SheetTitle className="text-2xl text-white flex items-center gap-2">
+                  <History className="w-6 h-6 text-indigo-400" />
+                  Audit History
+                </SheetTitle>
+                <SheetDescription className="text-slate-500">
+                  Reload previously audited scripts and variations.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-4 overflow-y-auto max-h-[80vh] pr-2 custom-scrollbar">
+                {sessions.length === 0 ? (
+                  <div className="text-center py-20 text-slate-700">
+                    <Search className="w-12 h-12 mx-auto mb-4 opacity-10" />
+                    <p>No saved audits yet.</p>
+                  </div>
+                ) : (
+                  sessions.map(s => (
+                    <div
+                      key={s.id}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer group ${currentSessionId === s.id ? "bg-indigo-500/10 border-indigo-500/50" : "bg-slate-900/50 border-slate-800 hover:border-slate-700"}`}
+                      onClick={() => handleLoadSession(s.id)}
+                    >
+                      <div className="flex items-start justify-between mb-2">
+                        <h3 className="font-bold text-slate-200 line-clamp-1 group-hover:text-indigo-400 transition-colors">{s.name}</h3>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-600 hover:text-red-400"
+                          onClick={(e) => handleDeleteSession(e, s.id)}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] text-slate-500 uppercase tracking-widest font-bold">
+                        <span>{new Date(s.timestamp).toLocaleDateString()}</span>
+                        {currentSessionId === s.id && <span className="text-indigo-400">Current</span>}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </SheetContent>
+          </Sheet>
+
+          <Button
+            variant="outline"
+            disabled={extractedNouns.length === 0}
+            className="border-slate-800 text-slate-400 hover:text-white gap-2 rounded-xl h-10"
+            onClick={handleSaveSession}
+          >
+            <Save className="w-4 h-4" />
+            Save Session
+          </Button>
+
+          <Button
+            variant="outline"
+            className="border-slate-800 text-red-500/70 hover:text-red-400 hover:bg-red-500/10 gap-2 rounded-xl h-10"
+            onClick={() => {
+              if (confirm("Reset current audit? Unsaved changes will be lost.")) {
+                setScript("");
+                setExtractedNouns([]);
+                setFinalScript(null);
+                setCurrentSessionId(null);
+                stopAudio();
+              }
+            }}
+          >
+            <RotateCcw className="w-4 h-4" />
+            Reset
+          </Button>
         </div>
       </header>
 
@@ -453,31 +666,91 @@ export default function AudioAuditDashboard() {
                       </Button>
                     </div>
                   </div>
-                  <div className="p-8 space-y-6">
+                  <div className="p-8 space-y-8">
                     <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 text-lg leading-relaxed text-slate-300 whitespace-pre-wrap font-serif min-h-[150px]">
                       {finalScript}
                     </div>
 
-                    <Button
-                      onClick={handlePlayFinalAudio}
-                      disabled={isPlayingFinal && !audioElement}
-                      className={`w-full h-14 rounded-2xl text-lg font-bold transition-all gap-3 shadow-xl ${isPlayingFinal
-                        ? "bg-red-500/10 border border-red-500/50 text-red-400 hover:bg-red-500/20"
-                        : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
-                        }`}
-                    >
-                      {isPlayingFinal ? (
-                        <>
-                          <Pause className="w-6 h-6 fill-current" />
-                          Stop Playback
-                        </>
-                      ) : (
-                        <>
-                          <Music className="w-6 h-6" />
-                          Generate & Play Final Audio
-                        </>
-                      )}
-                    </Button>
+                    {/* Advanced Audio Player */}
+                    <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 space-y-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+                          <span>{formatTime(currentTime)}</span>
+                          <span>{formatTime(duration)}</span>
+                        </div>
+                        <Slider
+                          value={[currentTime]}
+                          max={duration}
+                          step={0.1}
+                          onValueChange={([val]) => {
+                            if (finalAudioRef.current) {
+                              finalAudioRef.current.currentTime = val;
+                              setCurrentTime(val);
+                            }
+                          }}
+                          className="py-4"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-6">
+                        <div className="flex items-center gap-4">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 rounded-full border-slate-800 text-slate-400 hover:text-white"
+                            onClick={() => skip10(false)}
+                          >
+                            <Rewind className="w-5 h-5 fill-current" />
+                          </Button>
+
+                          <Button
+                            onClick={handlePlayFinalAudio}
+                            className={`h-16 w-16 rounded-full flex items-center justify-center transition-all shadow-xl ${isPlayingFinal
+                              ? "bg-red-500/10 border border-red-500/50 text-red-400 hover:bg-red-500/20"
+                              : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
+                              }`}
+                          >
+                            {isPlayingFinal ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-10 w-10 rounded-full border-slate-800 text-slate-400 hover:text-white"
+                            onClick={() => skip10(true)}
+                          >
+                            <FastForward className="w-5 h-5 fill-current" />
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className={`h-10 w-10 rounded-full border-slate-800 transition-all ${finalAudioRef.current?.src ? "text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10" : "text-slate-700 opacity-50 cursor-not-allowed"}`}
+                            onClick={handleDownloadAudio}
+                            title="Download Audio"
+                          >
+                            <Download className="w-5 h-5 text-indigo-400" />
+                          </Button>
+                        </div>
+
+                        <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+                          {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
+                            <Button
+                              key={rate}
+                              variant="ghost"
+                              size="sm"
+                              className={`h-8 px-3 text-[10px] font-bold rounded-lg transition-all ${playbackRate === rate
+                                ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/20"
+                                : "text-slate-500 hover:text-slate-300"
+                                }`}
+                              onClick={() => setPlaybackRate(rate)}
+                            >
+                              {rate}x
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </Card>
               )}

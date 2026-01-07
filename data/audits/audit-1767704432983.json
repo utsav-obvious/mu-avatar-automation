@@ -1,0 +1,91 @@
+{
+  "id": "audit-1767704432983",
+  "name": "आकाश, Masters’ Union, CRM...",
+  "timestamp": "2026-01-06T13:00:32.983Z",
+  "originalScript": "\"Hey आकाश, congratulations — and welcome to Masters’ Union!  \nYou’ve built an exciting profile at the intersection of entrepreneurship, business development, and technology. Your entrepreneurial drive and hands-on experience with CRM systems and lead generation, especially through your roles at Gofu-Solutions and Kreed-Sports-Tech, highlight your proactive approach and strategic mindset.  \nYour time at SRM-Institute-of-Science-and-Technology, pursuing a Bachelor of Technology in Computer Science and Business Systems, demonstrates your solid technical grounding. Scoring 86% in your 10th grade and 80% in your 12th grade showcases your consistent dedication.  \nWhen you spoke with गुर्नीश, he shared very positive feedback from your interview. He was impressed with your structured thinking, practical approach to business challenges, and your ability to combine technical and business insights.  \nYour next chapter here will stretch you, challenge you, and help you grow in all the right ways. We’re excited to see the kind of work you’ll create, the teams you’ll lead, and the impact you’ll make. Welcome to the Masters’ Union family and see you on campus soon…\"",
+  "extractedNouns": [
+    {
+      "original": "आकाश",
+      "context": "Hey आकाश, congratulations — and welcome to Masters’ Union!",
+      "variations": [
+        "Aa-kaash",
+        "Ah-KASH",
+        "Aah...kaash"
+      ]
+    },
+    {
+      "original": "Masters’ Union",
+      "context": "Hey आकाश, congratulations — and welcome to Masters’ Union!",
+      "variations": [
+        "MAS-terz YOON-yun",
+        "Masters Union",
+        "Masters... Union"
+      ]
+    },
+    {
+      "original": "CRM",
+      "context": "Your entrepreneurial drive and hands-on experience with CRM systems and lead generation...",
+      "variations": [
+        "C-R-M",
+        "SEE-ARE-EM",
+        "C.R.M."
+      ]
+    },
+    {
+      "original": "Gofu-Solutions",
+      "context": "...especially through your roles at Gofu-Solutions and Kreed-Sports-Tech, highlight your proactive approach and strategic mindset.",
+      "variations": [
+        "Go-foo Solu-shuns",
+        "GO-FOO Solu-shuns",
+        "Go-fu... Solutions"
+      ]
+    },
+    {
+      "original": "Kreed-Sports-Tech",
+      "context": "...especially through your roles at Gofu-Solutions and Kreed-Sports-Tech, highlight your proactive approach and strategic mindset.",
+      "variations": [
+        "Creed Sports Tek",
+        "KREED-sports-tech",
+        "Kreed... Sports... Tek"
+      ]
+    },
+    {
+      "original": "SRM-Institute-of-Science-and-Technology",
+      "context": "Your time at SRM-Institute-of-Science-and-Technology, pursuing a Bachelor of Technology in Computer Science and Business Systems, demonstrates your solid technical grounding.",
+      "variations": [
+        "S-R-M Institute of Science and Tek-nol-o-jee",
+        "ESS-ARE-EM Institute of Science and Technology",
+        "S.R.M. In-sti-tute of Science and Technology"
+      ]
+    },
+    {
+      "original": "Bachelor of Technology",
+      "context": "...pursuing a Bachelor of Technology in Computer Science and Business Systems, demonstrates your solid technical grounding.",
+      "variations": [
+        "Batch-elor of Tek-nology",
+        "Bachelor of Tek-NOL-o-gee",
+        "Bachelor of Tech-nology"
+      ]
+    },
+    {
+      "original": "Computer Science and Business Systems",
+      "context": "...pursuing a Bachelor of Technology in Computer Science and Business Systems, demonstrates your solid technical grounding.",
+      "variations": [
+        "Com-pyoo-ter Science and Biz-ness Systems",
+        "Computer Science and Business Sys-tems",
+        "Computer Science and BIZ-NESS systems"
+      ]
+    },
+    {
+      "original": "गुर्नीश",
+      "context": "When you spoke with गुर्नीश, he shared very positive feedback from your interview.",
+      "variations": [
+        "Gur-neesh",
+        "Goor-NEESH",
+        "Ger-neesh"
+      ],
+      "selectedVariation": "Gur-neesh"
+    }
+  ],
+  "finalScript": "\"Hey आकाश, congratulations — and welcome to Masters’ Union!  \nYou’ve built an exciting profile at the intersection of entrepreneurship, business development, and technology. Your entrepreneurial drive and hands-on experience with CRM systems and lead generation, especially through your roles at Gofu-Solutions and Kreed-Sports-Tech, highlight your proactive approach and strategic mindset.  \nYour time at SRM-Institute-of-Science-and-Technology, pursuing a Bachelor of Technology in Computer Science and Business Systems, demonstrates your solid technical grounding. Scoring 86% in your 10th grade and 80% in your 12th grade showcases your consistent dedication.  \nWhen you spoke with Gur-neesh, he shared very positive feedback from your interview. He was impressed with your structured thinking, practical approach to business challenges, and your ability to combine technical and business insights.  \nYour next chapter here will stretch you, challenge you, and help you grow in all the right ways. We’re excited to see the kind of work you’ll create, the teams you’ll lead, and the impact you’ll make. Welcome to the Masters’ Union family and see you on campus soon…\""
+}
