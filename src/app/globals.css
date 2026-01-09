@@ -1,22 +1,24 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@import "@layer utilities {
+@layer utilities {
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
   }
+
   .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
+
   .custom-scrollbar::-webkit-scrollbar-thumb {
     background: #1e293b;
     border-radius: 10px;
   }
+
   .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: #334155;
   }
 }
--css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -136,6 +138,7 @@
   * {
     @apply border-border outline-ring/50;
   }
+
   body {
     @apply bg-background text-foreground;
   }

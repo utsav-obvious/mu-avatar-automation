@@ -30,10 +30,11 @@ export default function AudioAuditDashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedNouns, setExtractedNouns] = useState<AuditState[]>([]);
   const [isRegenerating, setIsRegenerating] = useState<Record<number, boolean>>({});
-  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" } | null>(null);
+  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" } | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [finalScript, setFinalScript] = useState<string | null>(null);
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
+  const [audioCache, setAudioCache] = useState<Record<string, string>>({});
 
   // Storage State
   const [sessions, setSessions] = useState<{ id: string, name: string, timestamp: string }[]>([]);
@@ -256,7 +257,7 @@ export default function AudioAuditDashboard() {
   };
 
 
-  const handlePlay = async (text: string, index: number, vIndex: number | "manual" | "context") => {
+  const handlePlay = async (text: string, index: number, vIndex: number | "manual" | "context" | "original") => {
     if (playingAudio?.index === index && playingAudio?.vIndex === vIndex) {
       stopAudio();
       return;
@@ -266,7 +267,13 @@ export default function AudioAuditDashboard() {
     setPlayingAudio({ index, vIndex });
 
     try {
-      const audioData = await generateVariationAudio(text);
+      let audioData = audioCache[text];
+
+      if (!audioData) {
+        audioData = await generateVariationAudio(text);
+        setAudioCache(prev => ({ ...prev, [text]: audioData }));
+      }
+
       const audio = new Audio(audioData);
       setAudioElement(audio);
       audio.play();
@@ -428,8 +435,23 @@ export default function AudioAuditDashboard() {
                 <Card key={index} className="bg-slate-900 border-slate-800 hover:border-indigo-500/50 transition-all shadow-xl group rounded-2xl overflow-hidden">
                   <CardHeader className="pb-2 bg-slate-900/50">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-2xl font-bold tracking-tight text-white group-hover:text-indigo-400 transition-colors">
+                      <CardTitle className="text-2xl font-bold tracking-tight text-white group-hover:text-indigo-400 transition-colors flex items-center gap-3">
                         {noun.original}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-slate-500 hover:text-indigo-400"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePlay(noun.original, index, "original");
+                          }}
+                        >
+                          {playingAudio?.index === index && playingAudio?.vIndex === "original" ? (
+                            <Pause className="w-4 h-4 fill-current" />
+                          ) : (
+                            <Play className="w-4 h-4 fill-current" />
+                          )}
+                        </Button>
                       </CardTitle>
                       <CheckCircle2 className="w-6 h-6 text-slate-700 group-hover:text-slate-600 transition-colors" />
                     </div>
