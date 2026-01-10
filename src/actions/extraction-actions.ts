@@ -26,11 +26,13 @@ export async function extractProperNouns(script: string): Promise<ExtractedNoun[
 
     const prompt = `
     Extract all proper nouns (Names, Places, Organizations, Acronyms) from the text.
-    For each noun, provide its context and generate 3 phonetic variations optimized for ElevenLabs TTS.
+    For each noun, provide its context and generate 4 variations optimized for ElevenLabs TTS.
     
-    IMPORTANT: The "original" field MUST be the exact literal spelling as found in the text (don't correct capitalization or spelling in the "original" field).
+    IMPORTANT: 
+    1. The "original" field MUST be the exact literal spelling as found in the text.
+    2. The 4th variant (variations[3]) MUST be the Hindi translation of the noun in Devanagari script.
     
-    Techniques for variations:
+    Techniques for variations 1-3 (Phonetic):
     1. Phonetic Respelling (e.g., Ramesh -> Ruh-mesh)
     2. Schwa Removal (e.g., Vikram -> Vik-ram)
     3. Aspiration Control (e.g., Bhagat -> Bhaa-gut)
@@ -46,7 +48,7 @@ export async function extractProperNouns(script: string): Promise<ExtractedNoun[
       {
         "original": "Proper Noun",
         "context": "Sentence context...",
-        "variations": ["Variation 1", "Variation 2", "Variation 3"]
+        "variations": ["Phonetic 1", "Phonetic 2", "Phonetic 3", "Hindi Translation"]
       }
     ]
 
@@ -70,7 +72,7 @@ export async function extractProperNouns(script: string): Promise<ExtractedNoun[
         // Ensure variations exist
         return data.map((item: any) => ({
             ...item,
-            variations: item.variations || [item.original, item.original, item.original]
+            variations: item.variations || [item.original, item.original, item.original, item.original]
         }));
     } catch (error) {
         console.error("Error extracting proper nouns:", error);
@@ -86,12 +88,12 @@ export async function regenerateNounVariations(noun: string, context: string, ex
     const prompt = `
     Generate 3 new and DIFFERENT phonetic variations for the proper noun "${noun}" found in this context: "${context}".
     
-    IMPORTANT: Do not suggest any of these existing variations: ${existingVariations.join(", ")}.
-    
-    Current techniques: Phonetic Respelling, Syllable Timing, capitalizations, schwa removal, etc.
+    IMPORTANT: 
+    1. Do not suggest any of these existing variations: ${existingVariations.join(", ")}.
+    2. Focus on phonetic respellings, syllable timing, and emphasis techniques.
     
     Return ONLY a JSON array of 3 unique strings.
-  `;
+    `;
 
     try {
         const result = await model.generateContent(prompt);

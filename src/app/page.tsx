@@ -34,7 +34,9 @@ export default function AudioAuditDashboard() {
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [finalScript, setFinalScript] = useState<string | null>(null);
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
+  const [isFinalLoading, setIsFinalLoading] = useState(false);
   const [audioCache, setAudioCache] = useState<Record<string, string>>({});
+  const [audioLoading, setAudioLoading] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" } | null>(null);
 
   // Storage State
   const [sessions, setSessions] = useState<{ id: string, name: string, timestamp: string }[]>([]);
@@ -157,31 +159,47 @@ export default function AudioAuditDashboard() {
       return;
     }
 
-    if (finalAudioRef.current && finalAudioRef.current.src) {
-      // Resume if already loaded
-      finalAudioRef.current.play();
-      setIsPlayingFinal(true);
-      return;
-    }
-
-    setIsPlayingFinal(true);
     try {
-      const audioData = await generateVariationAudio(finalScript);
-      const audio = new Audio(audioData);
-      audio.playbackRate = playbackRate;
+      let audioData = audioCache[finalScript];
 
-      audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
-      audio.onloadedmetadata = () => setDuration(audio.duration);
-      audio.onended = () => {
-        setIsPlayingFinal(false);
-        setCurrentTime(0);
-      };
+      // If we don't have the audio for this specific script, or the current Audio object has a different src
+      if (!audioData || (finalAudioRef.current && finalAudioRef.current.src !== audioData)) {
+        if (finalAudioRef.current) {
+          finalAudioRef.current.pause();
+          finalAudioRef.current = null;
+        }
 
-      finalAudioRef.current = audio;
-      audio.play();
+        setIsFinalLoading(true);
+        setIsPlayingFinal(true);
+
+        if (!audioData) {
+          audioData = await generateVariationAudio(finalScript);
+          setAudioCache(prev => ({ ...prev, [finalScript]: audioData }));
+        }
+
+        setIsFinalLoading(false);
+
+        const audio = new Audio(audioData);
+        audio.playbackRate = playbackRate;
+
+        audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
+        audio.onloadedmetadata = () => setDuration(audio.duration);
+        audio.onended = () => {
+          setIsPlayingFinal(false);
+          setCurrentTime(0);
+        };
+
+        finalAudioRef.current = audio;
+        audio.play();
+      } else if (finalAudioRef.current) {
+        // Resume existing audio if it matches the current script
+        finalAudioRef.current.play();
+        setIsPlayingFinal(true);
+      }
     } catch (error) {
       toast.error("Failed to generate final audio. Script might be too long.");
       setIsPlayingFinal(false);
+      setIsFinalLoading(false);
     }
   };
 
@@ -270,10 +288,12 @@ export default function AudioAuditDashboard() {
       let audioData = audioCache[text];
 
       if (!audioData) {
+        setAudioLoading({ index, vIndex });
         audioData = await generateVariationAudio(text);
         setAudioCache(prev => ({ ...prev, [text]: audioData }));
       }
 
+      setAudioLoading(null);
       const audio = new Audio(audioData);
       setAudioElement(audio);
       audio.play();
@@ -284,15 +304,26 @@ export default function AudioAuditDashboard() {
     } catch (error) {
       toast.error("Failed to play audio.");
       setPlayingAudio(null);
+      setAudioLoading(null);
     }
   };
 
-  const handleSelect = (index: number, variation: string) => {
+  const handleSelect = (index: number, variation?: string) => {
     const updatedNouns = [...extractedNouns];
-    updatedNouns[index] = { ...updatedNouns[index], selectedVariation: variation };
+    const currentSelection = updatedNouns[index].selectedVariation;
+
+    // Toggle: if clicking the same one, de-select it (which reverts to default)
+    // If variation is undefined, it means we are explicitly selecting "Default"
+    if (variation === undefined || currentSelection === variation) {
+      updatedNouns[index] = { ...updatedNouns[index], selectedVariation: undefined };
+      toast.info(`Reverted ${updatedNouns[index].original} to default`);
+    } else {
+      updatedNouns[index] = { ...updatedNouns[index], selectedVariation: variation };
+      toast.success(`Selected "${variation}" for ${updatedNouns[index].original}`);
+    }
+
     setExtractedNouns(updatedNouns);
     setFinalScript(null); // Force re-generate to see changes
-    toast.success(`Selected "${variation}" for ${updatedNouns[index].original}`);
   };
 
   return (
@@ -435,8 +466,33 @@ export default function AudioAuditDashboard() {
                 <Card key={index} className="bg-slate-900 border-slate-800 hover:border-indigo-500/50 transition-all shadow-xl group rounded-2xl overflow-hidden">
                   <CardHeader className="pb-2 bg-slate-900/50">
                     <div className="flex items-center justify-between">
-                      <CardTitle className="text-2xl font-bold tracking-tight text-white group-hover:text-indigo-400 transition-colors flex items-center gap-3">
-                        {noun.original}
+                      <div className="flex items-center gap-4">
+                        <div
+                          className={`flex items-center gap-3 px-3 py-1.5 rounded-xl border transition-all cursor-pointer ${!noun.selectedVariation
+                            ? "bg-indigo-500/20 border-indigo-500/50"
+                            : "bg-slate-950/50 border-slate-800 hover:border-slate-700"
+                            }`}
+                          onClick={() => handleSelect(index, undefined)}
+                        >
+                          <div className={`w-5 h-5 rounded-full border flex items-center justify-center transition-all ${!noun.selectedVariation
+                            ? "bg-indigo-500 border-indigo-500 text-white"
+                            : "border-slate-700 text-transparent"
+                            }`}>
+                            <Check className="w-3 h-3" />
+                          </div>
+                          <CardTitle className="text-2xl font-bold tracking-tight text-white transition-colors">
+                            {noun.original}
+                          </CardTitle>
+                        </div>
+
+                        {!noun.selectedVariation && (
+                          <span className="text-[10px] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded-full uppercase tracking-widest font-bold">
+                            Default
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -445,15 +501,18 @@ export default function AudioAuditDashboard() {
                             e.stopPropagation();
                             handlePlay(noun.original, index, "original");
                           }}
+                          disabled={audioLoading?.index === index && audioLoading?.vIndex === "original"}
                         >
-                          {playingAudio?.index === index && playingAudio?.vIndex === "original" ? (
+                          {audioLoading?.index === index && audioLoading?.vIndex === "original" ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : playingAudio?.index === index && playingAudio?.vIndex === "original" ? (
                             <Pause className="w-4 h-4 fill-current" />
                           ) : (
                             <Play className="w-4 h-4 fill-current" />
                           )}
                         </Button>
-                      </CardTitle>
-                      <CheckCircle2 className="w-6 h-6 text-slate-700 group-hover:text-slate-600 transition-colors" />
+                        <CheckCircle2 className={`w-6 h-6 transition-colors ${!noun.selectedVariation ? "text-indigo-500" : "text-slate-700"}`} />
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent className="pt-4 space-y-6">
@@ -508,8 +567,11 @@ export default function AudioAuditDashboard() {
                                   e.stopPropagation();
                                   handlePlay(variant, index, vIndex);
                                 }}
+                                disabled={audioLoading?.index === index && audioLoading?.vIndex === vIndex}
                               >
-                                {playingAudio?.index === index && playingAudio?.vIndex === vIndex ? (
+                                {audioLoading?.index === index && audioLoading?.vIndex === vIndex ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : playingAudio?.index === index && playingAudio?.vIndex === vIndex ? (
                                   <Pause className="w-4 h-4 fill-current" />
                                 ) : (
                                   <Play className="w-4 h-4 fill-current" />
@@ -586,13 +648,16 @@ export default function AudioAuditDashboard() {
                               const contextText = noun.context.replace(regex, noun.selectedVariation!);
                               handlePlay(contextText, index, "context");
                             }}
+                            disabled={audioLoading?.index === index && audioLoading?.vIndex === "context"}
                           >
-                            {playingAudio?.index === index && playingAudio?.vIndex === "context" ? (
-                              <Pause className="w-4 h-4 fill-current animate-pulse" />
+                            {audioLoading?.index === index && audioLoading?.vIndex === "context" ? (
+                              <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                            ) : playingAudio?.index === index && playingAudio?.vIndex === "context" ? (
+                              <Pause className="w-4 h-4 fill-current animate-pulse mr-2" />
                             ) : (
-                              <Music className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                              <Music className="w-4 h-4 group-hover:scale-110 transition-transform mr-2" />
                             )}
-                            {playingAudio?.index === index && playingAudio?.vIndex === "context" ? "Playing Context..." : "Listen in Context"}
+                            {audioLoading?.index === index && audioLoading?.vIndex === "context" ? "Loading..." : playingAudio?.index === index && playingAudio?.vIndex === "context" ? "Playing Context..." : "Listen in Context"}
                           </Button>
                         </div>
                       )}
@@ -629,9 +694,11 @@ export default function AudioAuditDashboard() {
                           size="icon"
                           className="h-9 w-9 text-slate-500 hover:text-indigo-400 border border-slate-800"
                           onClick={() => noun.customVariation && handlePlay(noun.customVariation, index, "manual")}
-                          disabled={!noun.customVariation}
+                          disabled={!noun.customVariation || (audioLoading?.index === index && audioLoading?.vIndex === "manual")}
                         >
-                          {playingAudio?.index === index && playingAudio?.vIndex === "manual" ? (
+                          {audioLoading?.index === index && audioLoading?.vIndex === "manual" ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : playingAudio?.index === index && playingAudio?.vIndex === "manual" ? (
                             <Pause className="w-4 h-4 fill-current" />
                           ) : (
                             <Play className="w-4 h-4 fill-current" />
@@ -675,6 +742,10 @@ export default function AudioAuditDashboard() {
                       <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">Final Audited Script</span>
                     </div>
                     <div className="flex gap-2">
+                      <Button variant="ghost" size="sm" className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5" onClick={generateAuditedScript}>
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Regenerate
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={copyToClipboard}>
                         <Copy className="w-3.5 h-3.5 mr-2" />
                         Copy text
@@ -689,9 +760,11 @@ export default function AudioAuditDashboard() {
                     </div>
                   </div>
                   <div className="p-8 space-y-8">
-                    <div className="bg-slate-950 p-6 rounded-2xl border border-slate-800 text-lg leading-relaxed text-slate-300 whitespace-pre-wrap font-serif min-h-[150px]">
-                      {finalScript}
-                    </div>
+                    <Textarea
+                      className="min-h-[200px] bg-slate-950 border-slate-800 text-lg leading-relaxed text-slate-300 focus-visible:ring-indigo-500 transition-all rounded-2xl p-6 font-serif resize-none"
+                      value={finalScript}
+                      onChange={(e) => setFinalScript(e.target.value)}
+                    />
 
                     {/* Advanced Audio Player */}
                     <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 space-y-6">
@@ -727,12 +800,19 @@ export default function AudioAuditDashboard() {
 
                           <Button
                             onClick={handlePlayFinalAudio}
+                            disabled={isFinalLoading}
                             className={`h-16 w-16 rounded-full flex items-center justify-center transition-all shadow-xl ${isPlayingFinal
                               ? "bg-red-500/10 border border-red-500/50 text-red-400 hover:bg-red-500/20"
                               : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
                               }`}
                           >
-                            {isPlayingFinal ? <Pause className="w-8 h-8 fill-current" /> : <Play className="w-8 h-8 fill-current ml-1" />}
+                            {isFinalLoading ? (
+                              <Loader2 className="w-8 h-8 animate-spin" />
+                            ) : isPlayingFinal ? (
+                              <Pause className="w-8 h-8 fill-current" />
+                            ) : (
+                              <Play className="w-8 h-8 fill-current ml-1" />
+                            )}
                           </Button>
 
                           <Button
