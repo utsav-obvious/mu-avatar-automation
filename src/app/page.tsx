@@ -3,11 +3,12 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, generateContextAudio } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2 } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import { useRef, useEffect } from "react";
 import { saveAuditSession, listAuditSessions, getAuditSession, deleteAuditSession, AuditSession } from "@/actions/storage-actions";
@@ -30,13 +31,16 @@ export default function AudioAuditDashboard() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [extractedNouns, setExtractedNouns] = useState<AuditState[]>([]);
   const [isRegenerating, setIsRegenerating] = useState<Record<number, boolean>>({});
-  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" } | null>(null);
+  const [playingAudio, setPlayingAudio] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" | "scratchpad" } | null>(null);
   const [audioElement, setAudioElement] = useState<HTMLAudioElement | null>(null);
   const [finalScript, setFinalScript] = useState<string | null>(null);
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
   const [isFinalLoading, setIsFinalLoading] = useState(false);
   const [audioCache, setAudioCache] = useState<Record<string, string>>({});
-  const [audioLoading, setAudioLoading] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" } | null>(null);
+  const [audioLoading, setAudioLoading] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" | "scratchpad" } | null>(null);
+
+  // Scratchpad State
+  const [scratchpadText, setScratchpadText] = useState("");
 
   // Storage State
   const [sessions, setSessions] = useState<{ id: string, name: string, timestamp: string }[]>([]);
@@ -134,8 +138,21 @@ export default function AudioAuditDashboard() {
       audited = audited.replace(regex, replacement);
     });
 
+    // Automatically apply "Excite Ending" logic
+    const sentences = audited.match(/[^.!?]+[.!?]*/g) || [audited];
+    if (sentences.length > 0) {
+      const lastIdx = sentences.length - 1;
+      const lastSentence = sentences[lastIdx].trim();
+
+      // Transform last sentence: strip existing emotional cues first if any
+      const clean = lastSentence.replace(/[—!]/g, "").trim().toUpperCase();
+      sentences[lastIdx] = ` — ${clean} !!`;
+
+      audited = sentences.join(" ").trim();
+    }
+
     setFinalScript(audited);
-    toast.success("Final script prepared!");
+    toast.success("Final script prepared and excited!");
   };
 
   const stopAudio = () => {
@@ -275,7 +292,7 @@ export default function AudioAuditDashboard() {
   };
 
 
-  const handlePlay = async (text: string, index: number, vIndex: number | "manual" | "context" | "original") => {
+  const handlePlay = async (text: string, index: number, vIndex: number | "manual" | "context" | "original" | "scratchpad") => {
     if (playingAudio?.index === index && playingAudio?.vIndex === vIndex) {
       stopAudio();
       return;
@@ -742,6 +759,34 @@ export default function AudioAuditDashboard() {
                       <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">Final Audited Script</span>
                     </div>
                     <div className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+
+                          // Split into sentences (simple logic based on punctuation)
+                          // This regex looks for sentence endings while keeping the punctuation
+                          const sentences = finalScript.match(/[^.!?]+[.!?]*/g) || [finalScript];
+
+                          if (sentences.length > 0) {
+                            const lastIdx = sentences.length - 1;
+                            const lastSentence = sentences[lastIdx].trim();
+
+                            // Transform last sentence: strip existing emotional cues first if any
+                            const clean = lastSentence.replace(/[—!]/g, "").trim().toUpperCase();
+                            sentences[lastIdx] = ` — ${clean} !!`;
+
+                            const updated = sentences.join(" ").trim();
+                            setFinalScript(updated);
+                            toast.success("Excited ending applied!");
+                          }
+                        }}
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        Excite Ending
+                      </Button>
                       <Button variant="ghost" size="sm" className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5" onClick={generateAuditedScript}>
                         <RotateCcw className="w-3.5 h-3.5" />
                         Regenerate
@@ -765,6 +810,57 @@ export default function AudioAuditDashboard() {
                       value={finalScript}
                       onChange={(e) => setFinalScript(e.target.value)}
                     />
+
+                    <Button
+                      onClick={handlePlayFinalAudio}
+                      disabled={isFinalLoading}
+                      className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white transition-all rounded-xl shadow-lg shadow-indigo-500/20 text-lg font-semibold gap-3"
+                    >
+                      {isFinalLoading ? (
+                        <>
+                          <Loader2 className="w-6 h-6 animate-spin" />
+                          Generating Audio...
+                        </>
+                      ) : (
+                        <>
+                          <Music className="w-6 h-6" />
+                          {finalScript && audioCache[finalScript] ? "Play Audio" : "Generate Final Audio"}
+                        </>
+                      )}
+                    </Button>
+
+                    <div className="pt-4 border-t border-slate-800/50 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
+                          <Search className="w-3 h-3" />
+                          Word Scratchpad
+                        </label>
+                        <span className="text-[10px] text-slate-500 italic">Test pronunciations on the fly</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Type a word to test..."
+                          className="bg-slate-950 border-slate-800 rounded-xl px-4 h-11 text-sm focus-visible:ring-indigo-500 transition-all font-sans"
+                          value={scratchpadText}
+                          onChange={(e) => setScratchpadText(e.target.value)}
+                        />
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className={`h-11 w-11 rounded-xl border-slate-800 transition-all ${playingAudio?.vIndex === "scratchpad" ? "text-white border-indigo-500 bg-indigo-500/10" : "text-slate-400 hover:text-white"}`}
+                          onClick={() => scratchpadText && handlePlay(scratchpadText, -1, "scratchpad")}
+                          disabled={!scratchpadText || (audioLoading?.vIndex === "scratchpad")}
+                        >
+                          {audioLoading?.vIndex === "scratchpad" ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : playingAudio?.vIndex === "scratchpad" ? (
+                            <Pause className="w-5 h-5 fill-current" />
+                          ) : (
+                            <Play className="w-5 h-5 fill-current" />
+                          )}
+                        </Button>
+                      </div>
+                    </div>
 
                     {/* Advanced Audio Player */}
                     <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 space-y-6">
