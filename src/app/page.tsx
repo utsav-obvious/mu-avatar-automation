@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
-import { generateVariationAudio, generateContextAudio } from "@/actions/audio-actions";
+import { generateVariationAudio, generateContextAudio, WordAlignment, AudioResponse } from "@/actions/audio-actions";
 import { toast } from "sonner";
 import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
@@ -36,11 +36,15 @@ export default function AudioAuditDashboard() {
   const [finalScript, setFinalScript] = useState<string | null>(null);
   const [isPlayingFinal, setIsPlayingFinal] = useState(false);
   const [isFinalLoading, setIsFinalLoading] = useState(false);
-  const [audioCache, setAudioCache] = useState<Record<string, string>>({});
+  const [audioCache, setAudioCache] = useState<Record<string, AudioResponse>>({});
   const [audioLoading, setAudioLoading] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" | "scratchpad" } | null>(null);
 
   // Scratchpad State
   const [scratchpadText, setScratchpadText] = useState("");
+
+  // Alignment State
+  const [wordAlignments, setWordAlignments] = useState<WordAlignment[]>([]);
+  const [currentWordIndex, setCurrentWordIndex] = useState<number | null>(null);
 
   // Storage State
   const [sessions, setSessions] = useState<{ id: string, name: string, timestamp: string }[]>([]);
@@ -85,7 +89,7 @@ export default function AudioAuditDashboard() {
       await saveAuditSession(session);
       setCurrentSessionId(id);
       toast.success("Audit session saved to local JSON.");
-    } catch (error) {
+    } catch (_error) {
       toast.error("Failed to save session.");
     }
   };
@@ -177,10 +181,10 @@ export default function AudioAuditDashboard() {
     }
 
     try {
-      let audioData = audioCache[finalScript];
+      let cached = audioCache[finalScript];
 
       // If we don't have the audio for this specific script, or the current Audio object has a different src
-      if (!audioData || (finalAudioRef.current && finalAudioRef.current.src !== audioData)) {
+      if (!cached || (finalAudioRef.current && finalAudioRef.current.src !== cached.audioData)) {
         if (finalAudioRef.current) {
           finalAudioRef.current.pause();
           finalAudioRef.current = null;
@@ -189,21 +193,30 @@ export default function AudioAuditDashboard() {
         setIsFinalLoading(true);
         setIsPlayingFinal(true);
 
-        if (!audioData) {
-          audioData = await generateVariationAudio(finalScript);
-          setAudioCache(prev => ({ ...prev, [finalScript]: audioData }));
+        if (!cached) {
+          cached = await generateVariationAudio(finalScript);
+          setAudioCache(prev => ({ ...prev, [finalScript!]: cached }));
         }
 
+        setWordAlignments(cached.alignments || []);
         setIsFinalLoading(false);
 
-        const audio = new Audio(audioData);
+        const audio = new Audio(cached.audioData);
         audio.playbackRate = playbackRate;
 
-        audio.ontimeupdate = () => setCurrentTime(audio.currentTime);
+        audio.ontimeupdate = () => {
+          setCurrentTime(audio.currentTime);
+          // Find the current word index based on time
+          if (cached!.alignments) {
+            const index = cached!.alignments.findIndex(a => audio.currentTime >= a.start && audio.currentTime <= a.end);
+            setCurrentWordIndex(index !== -1 ? index : null);
+          }
+        };
         audio.onloadedmetadata = () => setDuration(audio.duration);
         audio.onended = () => {
           setIsPlayingFinal(false);
           setCurrentTime(0);
+          setCurrentWordIndex(null);
         };
 
         finalAudioRef.current = audio;
@@ -213,7 +226,7 @@ export default function AudioAuditDashboard() {
         finalAudioRef.current.play();
         setIsPlayingFinal(true);
       }
-    } catch (error) {
+    } catch (_error) {
       toast.error("Failed to generate final audio. Script might be too long.");
       setIsPlayingFinal(false);
       setIsFinalLoading(false);
@@ -302,23 +315,24 @@ export default function AudioAuditDashboard() {
     setPlayingAudio({ index, vIndex });
 
     try {
-      let audioData = audioCache[text];
+      let cached = audioCache[text];
 
-      if (!audioData) {
+      if (!cached) {
         setAudioLoading({ index, vIndex });
-        audioData = await generateVariationAudio(text);
-        setAudioCache(prev => ({ ...prev, [text]: audioData }));
+        cached = await generateVariationAudio(text);
+        setAudioCache(prev => ({ ...prev, [text]: cached }));
       }
 
       setAudioLoading(null);
-      const audio = new Audio(audioData);
+
+      const audio = new Audio(cached.audioData);
       setAudioElement(audio);
       audio.play();
       audio.onended = () => {
         setPlayingAudio(null);
         setAudioElement(null);
       };
-    } catch (error) {
+    } catch (_error) {
       toast.error("Failed to play audio.");
       setPlayingAudio(null);
       setAudioLoading(null);
@@ -534,7 +548,7 @@ export default function AudioAuditDashboard() {
                   </CardHeader>
                   <CardContent className="pt-4 space-y-6">
                     <p className="text-sm text-slate-400 leading-relaxed italic border-l-2 border-indigo-500/30 pl-4 py-1">
-                      "{noun.context}"
+                      &quot;{noun.context}&quot;
                     </p>
 
                     <div className="space-y-3">
@@ -864,6 +878,36 @@ export default function AudioAuditDashboard() {
 
                     {/* Advanced Audio Player */}
                     <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 space-y-6">
+                      {/* Live Transcript / Word Scrubbing */}
+                      {wordAlignments.length > 0 && (
+                        <div className="space-y-3">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
+                            <FileText className="w-3 h-3" />
+                            Live Transcript (Click word to scrub)
+                          </label>
+                          <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800/50 text-base leading-relaxed text-slate-400 flex flex-wrap gap-x-1.5 gap-y-1 max-h-[150px] overflow-y-auto custom-scrollbar">
+                            {wordAlignments.map((alignment, idx) => (
+                              <span
+                                key={idx}
+                                onClick={() => {
+                                  if (finalAudioRef.current) {
+                                    finalAudioRef.current.currentTime = alignment.start;
+                                    setCurrentTime(alignment.start);
+                                    if (!isPlayingFinal) {
+                                      finalAudioRef.current.play();
+                                      setIsPlayingFinal(true);
+                                    }
+                                  }
+                                }}
+                                className={`cursor-pointer transition-all px-1 rounded hover:text-white hover:bg-slate-800 ${currentWordIndex === idx ? "text-indigo-400 bg-indigo-500/10 font-medium scale-110" : ""}`}
+                              >
+                                {alignment.word}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="space-y-4">
                         <div className="flex items-center justify-between text-xs font-medium text-slate-500">
                           <span>{formatTime(currentTime)}</span>
