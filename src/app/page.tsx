@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, generateContextAudio, WordAlignment, AudioResponse } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2 } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import Link from "next/link";
 import { useRef, useEffect } from "react";
@@ -780,6 +780,51 @@ export default function AudioAuditDashboard() {
                       <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">Final Audited Script</span>
                     </div>
                     <div className="flex gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+                          const updated = finalScript.replace(/(\d+)\.(\d+)/g, (match, p1, p2) => {
+                            const digits = p2.split("").join(" ");
+                            return `${p1} point ${digits}`;
+                          });
+                          setFinalScript(updated);
+                          toast.success("Numbers formatted!");
+                        }}
+                      >
+                        <Hash className="w-3.5 h-3.5" />
+                        Format Numbers
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+                          const updated = finalScript.replace(/%/g, " percentage");
+                          setFinalScript(updated);
+                          toast.success("Percentages formatted!");
+                        }}
+                      >
+                        <Percent className="w-3.5 h-3.5" />
+                        Format %
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+                          const updated = finalScript.replace(/\bCGPA[,.]/g, "CGPA");
+                          setFinalScript(updated);
+                          toast.success("CGPA cleaned!");
+                        }}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Clean CGPA
+                      </Button>
                       <Button
                         variant="ghost"
                         size="sm"
