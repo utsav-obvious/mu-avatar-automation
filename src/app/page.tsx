@@ -8,8 +8,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, generateContextAudio, WordAlignment, AudioResponse } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
+import Link from "next/link";
 import { useRef, useEffect } from "react";
 import { saveAuditSession, listAuditSessions, getAuditSession, deleteAuditSession, AuditSession } from "@/actions/storage-actions";
 import {
@@ -369,6 +370,12 @@ export default function AudioAuditDashboard() {
         </div>
 
         <div className="flex items-center gap-3">
+          <Link href="/scrub">
+            <Button variant="outline" className="border-indigo-500/30 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-2 rounded-xl h-10">
+              <Volume2 className="w-4 h-4" />
+              Scrub Utility
+            </Button>
+          </Link>
           <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" className="border-slate-800 text-slate-400 hover:text-white gap-2 rounded-xl h-10">
