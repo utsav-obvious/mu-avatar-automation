@@ -144,7 +144,7 @@ export default function AudioAuditDashboard() {
     });
 
     // Automatically apply "Excite Ending" logic
-    const sentences = audited.match(/[^.!?]+[.!?]*/g) || [audited];
+    const sentences = audited.split(/(?<=[.!?])\s+/);
     if (sentences.length > 0) {
       const lastIdx = sentences.length - 1;
       const lastSentence = sentences[lastIdx].trim();
@@ -155,6 +155,10 @@ export default function AudioAuditDashboard() {
 
       audited = sentences.join(" ").trim();
     }
+
+    // Add space before commas and periods (standardizing pauses for TTS)
+    // Avoids decimals (e.g. 9.9) and large numbers (e.g. 1,000)
+    audited = audited.replace(/(?<!\s)([,.]+)(?!\d)/g, " $1");
 
     setFinalScript(audited);
     toast.success("Final script prepared and excited!");
@@ -831,10 +835,24 @@ export default function AudioAuditDashboard() {
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
                         onClick={() => {
                           if (!finalScript) return;
+                          const updated = finalScript.replace(/(?<!\s)([,.]+)(?!\d)/g, " $1");
+                          setFinalScript(updated);
+                          toast.success("Punctuation spaced!");
+                        }}
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        Space Punctuation
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
 
                           // Split into sentences (simple logic based on punctuation)
-                          // This regex looks for sentence endings while keeping the punctuation
-                          const sentences = finalScript.match(/[^.!?]+[.!?]*/g) || [finalScript];
+                          // This approach splits only when punctuation is followed by space, correctly ignoring decimal points
+                          const sentences = finalScript.split(/(?<=[.!?])\s+/);
 
                           if (sentences.length > 0) {
                             const lastIdx = sentences.length - 1;
