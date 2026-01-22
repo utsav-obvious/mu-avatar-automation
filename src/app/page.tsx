@@ -143,25 +143,10 @@ export default function AudioAuditDashboard() {
       audited = audited.replace(regex, replacement);
     });
 
-    // Automatically apply "Excite Ending" logic
-    const sentences = audited.split(/(?<=[.!?])\s+/);
-    if (sentences.length > 0) {
-      const lastIdx = sentences.length - 1;
-      const lastSentence = sentences[lastIdx].trim();
-
-      // Transform last sentence: strip existing emotional cues first if any
-      const clean = lastSentence.replace(/[—!]/g, "").trim().toUpperCase();
-      sentences[lastIdx] = ` — ${clean} !!`;
-
-      audited = sentences.join(" ").trim();
-    }
-
-    // Add space before commas and periods (standardizing pauses for TTS)
-    // Avoids decimals (e.g. 9.9) and large numbers (e.g. 1,000)
-    audited = audited.replace(/(?<!\s)([,.]+)(?!\d)/g, " $1");
+    // Space before commas and periods can be applied manually via "Space Punctuation" button
 
     setFinalScript(audited);
-    toast.success("Final script prepared and excited!");
+    toast.success("Final script prepared!");
   };
 
   const stopAudio = () => {
