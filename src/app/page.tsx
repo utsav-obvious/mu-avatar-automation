@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
-import { generateVariationAudio, generateContextAudio, WordAlignment, AudioResponse } from "@/actions/audio-actions";
+import { generateVariationAudio, WordAlignment, AudioResponse, TTSProvider } from "@/actions/audio-actions";
 import { toast } from "sonner";
 import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
@@ -39,6 +39,7 @@ export default function AudioAuditDashboard() {
   const [isFinalLoading, setIsFinalLoading] = useState(false);
   const [audioCache, setAudioCache] = useState<Record<string, AudioResponse>>({});
   const [audioLoading, setAudioLoading] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" | "scratchpad" } | null>(null);
+  const [ttsProvider, setTtsProvider] = useState<TTSProvider>("elevenlabs");
 
   // Scratchpad State
   const [scratchpadText, setScratchpadText] = useState("");
@@ -184,7 +185,7 @@ export default function AudioAuditDashboard() {
         setIsPlayingFinal(true);
 
         if (!cached) {
-          cached = await generateVariationAudio(finalScript);
+          cached = await generateVariationAudio(finalScript, ttsProvider);
           setAudioCache(prev => ({ ...prev, [finalScript!]: cached }));
         }
 
@@ -309,7 +310,7 @@ export default function AudioAuditDashboard() {
 
       if (!cached) {
         setAudioLoading({ index, vIndex });
-        cached = await generateVariationAudio(text);
+        cached = await generateVariationAudio(text, ttsProvider);
         setAudioCache(prev => ({ ...prev, [text]: cached }));
       }
 
@@ -353,9 +354,9 @@ export default function AudioAuditDashboard() {
         <div>
           <h1 className="text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
             <Music className="w-8 h-8 text-indigo-400" />
-            Audio Audit
+            Obvious Studios
           </h1>
-          <p className="text-slate-400">Pronunciation Auditing Tool for ElevenLabs</p>
+          <p className="text-slate-400">Pronunciation Auditing Tool for {ttsProvider === "elevenlabs" ? "ElevenLabs" : "MiniMax"}</p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -365,6 +366,31 @@ export default function AudioAuditDashboard() {
               Scrub Utility
             </Button>
           </Link>
+
+          <div className="flex bg-slate-900/50 p-1 rounded-xl border border-slate-800">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 px-3 rounded-lg text-xs font-bold transition-all ${ttsProvider === "elevenlabs" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 hover:text-slate-300"}`}
+              onClick={() => {
+                setTtsProvider("elevenlabs");
+                setAudioCache({}); // Clear cache when switching providers to avoid using wrong audio
+              }}
+            >
+              ElevenLabs
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 px-3 rounded-lg text-xs font-bold transition-all ${ttsProvider === "minimax" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 hover:text-slate-300"}`}
+              onClick={() => {
+                setTtsProvider("minimax");
+                setAudioCache({}); // Clear cache when switching providers
+              }}
+            >
+              MiniMax
+            </Button>
+          </div>
           <Sheet open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" className="border-slate-800 text-slate-400 hover:text-white gap-2 rounded-xl h-10">
