@@ -111,7 +111,7 @@ async function generateMinimaxAudio(text: string): Promise<AudioResponse> {
                 stream: false,
                 voice_setting: {
                     voice_id: minimaxVoiceId,
-                    speed: 1.0,
+                    speed: 0.96,
                     vol: 1.0,
                     pitch: 0,
                 },
