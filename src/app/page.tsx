@@ -8,11 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, WordAlignment, AudioResponse, TTSProvider } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent, Edit2 } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import Link from "next/link";
 import { useRef, useEffect } from "react";
 import { saveAuditSession, listAuditSessions, getAuditSession, deleteAuditSession, AuditSession } from "@/actions/storage-actions";
+import { spliceAudio } from "@/lib/ffmpeg";
 import {
   Sheet,
   SheetContent,
@@ -21,6 +22,7 @@ import {
   SheetTrigger,
   SheetDescription
 } from "@/components/ui/sheet";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface AuditState extends ExtractedNoun {
   selectedVariation?: string;
@@ -57,6 +59,8 @@ export default function AudioAuditDashboard() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [playbackRate, setPlaybackRate] = useState(1.25);
+  const [isPatching, setIsPatching] = useState<number | null>(null);
+  const [tempVariation, setTempVariation] = useState<string>("");
   const finalAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -162,6 +166,10 @@ export default function AudioAuditDashboard() {
     setPlayingAudio(null);
   };
 
+  const normalizeForMatch = (text: string) => {
+    return text.toLowerCase().replace(/[^a-z0-9]/g, "").trim();
+  };
+
   const handlePlayFinalAudio = async () => {
     if (!finalScript) return;
 
@@ -256,6 +264,136 @@ export default function AudioAuditDashboard() {
       const newTime = finalAudioRef.current.currentTime + (forward ? 10 : -10);
       finalAudioRef.current.currentTime = Math.max(0, Math.min(newTime, duration));
       setCurrentTime(finalAudioRef.current.currentTime);
+    }
+  };
+
+  const getAudioDuration = (src: string): Promise<number> => {
+    return new Promise((resolve) => {
+      const audio = new Audio(src);
+      const timer = setTimeout(() => resolve(0), 5000);
+      audio.onloadedmetadata = () => {
+        clearTimeout(timer);
+        resolve(audio.duration);
+      };
+      audio.onerror = () => {
+        clearTimeout(timer);
+        resolve(0);
+      };
+    });
+  };
+
+  const handleTryVariation = async (text: string) => {
+    if (!text.trim()) return;
+    try {
+      let cached = audioCache[text];
+      if (!cached) {
+        cached = await generateVariationAudio(text, ttsProvider);
+        setAudioCache(prev => ({ ...prev, [text]: cached }));
+      }
+      const audio = new Audio(cached.audioData);
+      audio.play();
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to generate preview audio.");
+    }
+  };
+
+  const handlePatchWord = async (idx: number, customPatchText?: string) => {
+    const alignment = wordAlignments[idx];
+    if (!alignment || !finalAudioRef.current?.src) return;
+
+    let patchText = "";
+
+    if (customPatchText) {
+      patchText = customPatchText;
+    } else {
+      const normTarget = normalizeForMatch(alignment.word);
+      const noun = extractedNouns.find(n =>
+        normalizeForMatch(n.original) === normTarget ||
+        (n.selectedVariation && normalizeForMatch(n.selectedVariation) === normTarget) ||
+        (n.customVariation && normalizeForMatch(n.customVariation) === normTarget)
+      );
+
+      if (!noun) {
+        toast.error("No auditor data found for this word.");
+        return;
+      }
+      patchText = noun.selectedVariation || noun.customVariation || noun.original;
+    }
+
+    const patchAudioRes = audioCache[patchText];
+
+    if (!patchAudioRes) {
+      toast.info(`Generating audio for "${patchText}"...`);
+      try {
+        const res = await generateVariationAudio(patchText, ttsProvider);
+        setAudioCache(prev => ({ ...prev, [patchText]: res }));
+        // Continue with the newly generated audio
+        await executePatch(idx, patchText, res.audioData);
+      } catch (error) {
+        toast.error(`Failed to generate audio for "${patchText}".`);
+      }
+      return;
+    }
+
+    await executePatch(idx, patchText, patchAudioRes.audioData);
+  };
+
+  const executePatch = async (idx: number, patchText: string, patchData: string) => {
+    const alignment = wordAlignments[idx];
+    if (!alignment) return;
+
+    setIsPatching(idx);
+    try {
+      console.log(`Starting patch for "${alignment.word}" at idx ${idx} with text "${patchText}"`);
+      const originalAudioSrc = finalAudioRef.current!.src;
+
+      const patchDuration = await getAudioDuration(patchData);
+      const originalDuration = alignment.end - alignment.start;
+      const diff = patchDuration - originalDuration;
+
+      console.log(`Durations - Patch: ${patchDuration.toFixed(3)}s, Original: ${originalDuration.toFixed(3)}s, Diff: ${diff.toFixed(3)}s`);
+
+      const patchedUrl = await spliceAudio(
+        originalAudioSrc,
+        patchData,
+        alignment.start,
+        alignment.end
+      );
+
+      const wasPlaying = isPlayingFinal;
+      finalAudioRef.current!.src = patchedUrl;
+      finalAudioRef.current!.load(); // Force browser to refresh buffer
+
+      // CRITICAL: Update the cache so subsequent plays/downloads use the patched version
+      if (finalScript) {
+        setAudioCache(prev => ({
+          ...prev,
+          [finalScript]: {
+            audioData: patchedUrl,
+            provider: ttsProvider
+          }
+        }));
+      }
+
+      if (wasPlaying) {
+        finalAudioRef.current!.play();
+      }
+
+      const updatedAlignments = wordAlignments.map((a, i) => {
+        if (i < idx) return a;
+        if (i === idx) return { ...a, end: a.start + patchDuration };
+        return { ...a, start: a.start + diff, end: a.end + diff };
+      });
+
+      setWordAlignments(updatedAlignments);
+      setDuration(prev => prev + diff);
+      toast.success(`Successfully patched with "${patchText}"!`);
+    } catch (error) {
+      console.error("Patching failed:", error);
+      toast.error("Failed to patch audio.");
+    } finally {
+      setIsPatching(null);
     }
   };
 
@@ -967,24 +1105,125 @@ export default function AudioAuditDashboard() {
                             Live Transcript (Click word to scrub)
                           </label>
                           <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800/50 text-base leading-relaxed text-slate-400 flex flex-wrap gap-x-1.5 gap-y-1 max-h-[150px] overflow-y-auto custom-scrollbar">
-                            {wordAlignments.map((alignment, idx) => (
-                              <span
-                                key={idx}
-                                onClick={() => {
-                                  if (finalAudioRef.current) {
-                                    finalAudioRef.current.currentTime = alignment.start;
-                                    setCurrentTime(alignment.start);
-                                    if (!isPlayingFinal) {
-                                      finalAudioRef.current.play();
-                                      setIsPlayingFinal(true);
-                                    }
-                                  }
-                                }}
-                                className={`cursor-pointer transition-all px-1 rounded hover:text-white hover:bg-slate-800 ${currentWordIndex === idx ? "text-indigo-400 bg-indigo-500/10 font-medium scale-110" : ""}`}
-                              >
-                                {alignment.word}
-                              </span>
-                            ))}
+                            {wordAlignments.map((alignment, idx) => {
+                              const normTarget = normalizeForMatch(alignment.word);
+                              const isProperNoun = extractedNouns.some(n =>
+                                normalizeForMatch(n.original) === normTarget ||
+                                (n.selectedVariation && normalizeForMatch(n.selectedVariation) === normTarget) ||
+                                (n.customVariation && normalizeForMatch(n.customVariation) === normTarget)
+                              );
+
+                              return (
+                                <div key={idx} className="group/word relative py-1">
+                                  <Popover onOpenChange={(open) => {
+                                    if (open) setTempVariation(alignment.word.replace(/[.,!?]$/, "").trim());
+                                  }}>
+                                    <span
+                                      onClick={() => {
+                                        if (finalAudioRef.current) {
+                                          finalAudioRef.current.currentTime = alignment.start;
+                                          setCurrentTime(alignment.start);
+                                          if (!isPlayingFinal) {
+                                            finalAudioRef.current.play();
+                                            setIsPlayingFinal(true);
+                                          }
+                                        }
+                                      }}
+                                      className={`cursor-pointer transition-all px-1 rounded-lg hover:text-white hover:bg-slate-800 ${currentWordIndex === idx ? "text-indigo-400 bg-indigo-500/10 font-bold scale-110" : "text-slate-400"} ${isProperNoun ? "underline decoration-indigo-500/50 decoration-2 underline-offset-4" : ""}`}
+                                    >
+                                      {alignment.word}
+                                    </span>
+
+                                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex items-center gap-1 opacity-0 group-hover/word:opacity-100 transition-all z-10 px-1 py-0.5 bg-slate-900 border border-slate-800 rounded-full shadow-2xl">
+                                      {isProperNoun && (
+                                        <button
+                                          title="Quick Patch (Approved variation)"
+                                          className="p-1.5 hover:bg-indigo-500/10 text-indigo-400 rounded-full transition-transform hover:scale-110 disabled:opacity-50"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handlePatchWord(idx);
+                                          }}
+                                          disabled={isPatching !== null}
+                                        >
+                                          {isPatching === idx ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <Sparkles className="w-3 h-3 fill-current" />
+                                          )}
+                                        </button>
+                                      )}
+
+                                      <PopoverTrigger asChild>
+                                        <button
+                                          title="Custom Scratchpad"
+                                          className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full transition-transform hover:scale-110"
+                                        >
+                                          <Edit2 className="w-3 h-3" />
+                                        </button>
+                                      </PopoverTrigger>
+                                    </div>
+
+                                    <PopoverContent className="w-64 bg-slate-900 border-slate-800 shadow-2xl p-4">
+                                      <div className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                          <h4 className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Word Scratchpad</h4>
+                                          <span className="text-[9px] text-slate-500 font-mono">idx: {idx}</span>
+                                        </div>
+
+                                        <div className="space-y-2">
+                                          <Input
+                                            value={tempVariation}
+                                            onChange={(e) => setTempVariation(e.target.value)}
+                                            placeholder="Phonetic respelling..."
+                                            className="h-8 text-xs bg-slate-950 border-slate-800"
+                                          />
+                                          <div className="flex gap-2">
+                                            <Button
+                                              size="sm"
+                                              variant="outline"
+                                              className="flex-1 h-8 text-[10px] border-slate-800"
+                                              onClick={() => handleTryVariation(tempVariation)}
+                                            >
+                                              <Play className="w-3 h-3 mr-1.5" />
+                                              Try
+                                            </Button>
+                                            <Button
+                                              size="sm"
+                                              className="flex-1 h-8 text-[10px] bg-indigo-600 hover:bg-indigo-700"
+                                              onClick={() => handlePatchWord(idx, tempVariation)}
+                                              disabled={isPatching !== null}
+                                            >
+                                              {isPatching === idx ? (
+                                                <Loader2 className="w-3 h-3 animate-spin" />
+                                              ) : (
+                                                <>
+                                                  <Sparkles className="w-3 h-3 mr-1.5" />
+                                                  Patch
+                                                </>
+                                              )}
+                                            </Button>
+                                          </div>
+                                        </div>
+
+                                        {isProperNoun && (
+                                          <div className="pt-2 border-t border-slate-800/50">
+                                            <Button
+                                              variant="ghost"
+                                              className="w-full justify-start h-7 text-[9px] text-indigo-400 hover:bg-indigo-500/10 px-0"
+                                              onClick={() => handlePatchWord(idx)}
+                                              disabled={isPatching !== null}
+                                            >
+                                              <CheckCircle2 className="w-3 h-3 mr-2" />
+                                              Use Auditor Approved Choice
+                                            </Button>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}

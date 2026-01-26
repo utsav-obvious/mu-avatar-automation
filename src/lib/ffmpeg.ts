@@ -33,7 +33,7 @@ export async function stitchAudioFiles(
         const source = audioSources[i];
 
         // fetchFile expects string, File, or Blob. Wrap Uint8Array in a Blob.
-        const data = await fetchFile(source instanceof Uint8Array ? new Blob([source]) : source);
+        const data = await fetchFile(source instanceof Uint8Array ? new Blob([source as any]) : source);
 
         await ffmpeg.writeFile(fileName, data);
         inputFiles.push(fileName);
@@ -50,6 +50,50 @@ export async function stitchAudioFiles(
     ]);
 
     const data = await ffmpeg.readFile(outputName);
-    const blob = new Blob([data], { type: "audio/mpeg" });
+    const blob = new Blob([data as any], { type: "audio/mpeg" });
+    return URL.createObjectURL(blob);
+}
+
+export async function spliceAudio(
+    originalAudio: string | Blob | File,
+    patchAudio: string | Blob | File,
+    startTime: number,
+    endTime: number,
+    outputName: string = "patched_audio.mp3"
+): Promise<string> {
+    const ffmpeg = await getFFmpeg();
+
+    const originalData = await fetchFile(originalAudio);
+    const patchData = await fetchFile(patchAudio);
+
+    await ffmpeg.writeFile("original.mp3", originalData);
+    await ffmpeg.writeFile("patch.mp3", patchData);
+
+    const parts: string[] = [];
+
+    // Cut part 1: 0 to startTime (only if startTime > 0.05s)
+    if (startTime > 0.05) {
+        await ffmpeg.exec(["-y", "-i", "original.mp3", "-t", startTime.toString(), "-c", "copy", "part1.mp3"]);
+        parts.push("part1.mp3");
+    }
+
+    // patch.mp3 is always included
+    parts.push("patch.mp3");
+
+    // Cut part 3: endTime to end
+    // We attempt to cut. If startTime is too close to end, it might fail or be empty.
+    try {
+        await ffmpeg.exec(["-y", "-i", "original.mp3", "-ss", endTime.toString(), "-c", "copy", "part3.mp3"]);
+        parts.push("part3.mp3");
+    } catch (e) {
+        console.warn("Trailing part split failed or was empty:", e);
+    }
+
+    // Concat parts
+    const concatString = `concat:${parts.join("|")}`;
+    await ffmpeg.exec(["-y", "-i", concatString, "-acodec", "copy", outputName]);
+
+    const data = await ffmpeg.readFile(outputName);
+    const blob = new Blob([data as any], { type: "audio/mpeg" });
     return URL.createObjectURL(blob);
 }
