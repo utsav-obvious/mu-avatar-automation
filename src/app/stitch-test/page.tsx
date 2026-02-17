@@ -133,7 +133,7 @@ export default function AudioStitcherTest() {
                                                 type="file"
                                                 accept="audio/*"
                                                 className="hidden"
-                                                ref={(el) => (fileInputRefs.current[source.id] = el)}
+                                                ref={(el) => { fileInputRefs.current[source.id] = el; }}
                                                 onChange={(e) => {
                                                     const file = e.target.files?.[0];
                                                     if (file) updateSourceValue(source.id, file);

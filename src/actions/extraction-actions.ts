@@ -31,6 +31,7 @@ export async function extractProperNouns(script: string): Promise<ExtractedNoun[
     IMPORTANT: 
     1. The "original" field MUST be the exact literal spelling as found in the text.
     2. The 4th variant (variations[3]) MUST be the Hindi translation of the noun in Devanagari script.
+    3. SPECIAL CASE: If a proper noun (Name) is preceded by "Hey" (e.g., "Hey Pratham"), extract the whole phrase "Hey Pratham" as the "original" noun. This helps in maintaining natural prosody for greetings.
     
     Techniques for variations 1-3 (Phonetic):
     1. Phonetic Respelling (e.g., Ramesh -> Ruh-mesh)

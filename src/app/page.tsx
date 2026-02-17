@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
 import { generateVariationAudio, WordAlignment, AudioResponse, TTSProvider } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent, Edit2 } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent, Edit2, ChevronDown } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import Link from "next/link";
 import { useRef, useEffect } from "react";
@@ -58,9 +58,12 @@ export default function AudioAuditDashboard() {
   // Advanced Audio Player State
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState(1.25);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const [isPatching, setIsPatching] = useState<number | null>(null);
   const [tempVariation, setTempVariation] = useState<string>("");
+  const [selectionStart, setSelectionStart] = useState<number | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<number | null>(null);
+  const [tempPhraseVariation, setTempPhraseVariation] = useState<string>("");
   const finalAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -150,8 +153,18 @@ export default function AudioAuditDashboard() {
 
     // Space before commas and periods can be applied manually via "Space Punctuation" button
 
+    // Automate paragraph splitting (every 2 sentences)
+    const sentences = audited.split(/(?<=[.!?])\s+/);
+    if (sentences.length > 0) {
+      const paragraphs = [];
+      for (let i = 0; i < sentences.length; i += 2) {
+        paragraphs.push(sentences.slice(i, i + 2).join(" "));
+      }
+      audited = paragraphs.join("\n\n");
+    }
+
     setFinalScript(audited);
-    toast.success("Final script prepared!");
+    toast.success("Final script prepared with automatic paragraphs!");
   };
 
   const stopAudio = () => {
@@ -249,6 +262,19 @@ export default function AudioAuditDashboard() {
       toast.success("Downloading audio...");
     } else {
       toast.error("Please generate the audio first.");
+    }
+  };
+
+  const handleDownloadVariant = (text: string, filename: string) => {
+    const cached = audioCache[text];
+    if (cached) {
+      const link = document.createElement("a");
+      link.href = cached.audioData;
+      link.download = `${filename}.mp3`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success(`Downloading ${filename}...`);
     }
   };
 
@@ -392,6 +418,92 @@ export default function AudioAuditDashboard() {
     } catch (error) {
       console.error("Patching failed:", error);
       toast.error("Failed to patch audio.");
+    } finally {
+      setIsPatching(null);
+    }
+  };
+
+  const handlePatchPhrase = async () => {
+    if (selectionStart === null || selectionEnd === null || !finalAudioRef.current?.src) return;
+
+    const startIdx = Math.min(selectionStart, selectionEnd);
+    const endIdx = Math.max(selectionStart, selectionEnd);
+
+    const phraseWords = wordAlignments.slice(startIdx, endIdx + 1);
+    const phraseText = tempPhraseVariation.trim() || phraseWords.map(a => a.word).join(" ");
+
+    setIsPatching(-1); // Use -1 to indicate phrase patching
+    toast.info(`Regenerating phrase: "${phraseText}"...`);
+
+    try {
+      let audioData: string;
+      let patchDuration: number;
+
+      // Check cache first for reuse (important for the pronoun dropdown feature)
+      if (audioCache[phraseText]) {
+        audioData = audioCache[phraseText].audioData;
+        patchDuration = await getAudioDuration(audioData);
+        toast.info("Using pre-auditioned audio variation...");
+      } else {
+        const res = await generateVariationAudio(phraseText, ttsProvider);
+        audioData = res.audioData;
+        patchDuration = await getAudioDuration(audioData);
+      }
+
+      const startTime = phraseWords[0].start;
+      const endTime = phraseWords[phraseWords.length - 1].end;
+      const originalDuration = endTime - startTime;
+      const diff = patchDuration - originalDuration;
+
+      const patchedUrl = await spliceAudio(
+        finalAudioRef.current.src,
+        audioData,
+        startTime,
+        endTime
+      );
+
+      const wasPlaying = isPlayingFinal;
+      finalAudioRef.current.src = patchedUrl;
+      finalAudioRef.current.load();
+
+      if (finalScript) {
+        setAudioCache(prev => ({
+          ...prev,
+          [finalScript]: {
+            audioData: patchedUrl,
+            provider: ttsProvider
+          }
+        }));
+      }
+
+      if (wasPlaying) finalAudioRef.current.play();
+
+      // Merge alignments
+      const newPhraseAlignment: WordAlignment = {
+        word: phraseText,
+        start: startTime,
+        end: startTime + patchDuration
+      };
+
+      const updatedAlignments = [
+        ...wordAlignments.slice(0, startIdx),
+        newPhraseAlignment,
+        ...wordAlignments.slice(endIdx + 1).map(a => ({
+          ...a,
+          start: a.start + diff,
+          end: a.end + diff
+        }))
+      ];
+
+      setWordAlignments(updatedAlignments);
+      setDuration(prev => prev + diff);
+      setSelectionStart(null);
+      setSelectionEnd(null);
+      setTempPhraseVariation("");
+      toast.success("Phrase patched successfully!");
+    } catch (error) {
+      console.error(error);
+      toast.error("Failed to patch phrase.");
     } finally {
       setIsPatching(null);
     }
@@ -671,8 +783,20 @@ export default function AudioAuditDashboard() {
                             }`}>
                             <Check className="w-3 h-3" />
                           </div>
-                          <CardTitle className="text-2xl font-bold tracking-tight text-white transition-colors">
+                          <CardTitle className="text-2xl font-bold tracking-tight text-white transition-colors flex items-center gap-2">
                             {noun.original}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-slate-500 hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(noun.original);
+                                toast.success("Copied original text!");
+                              }}
+                            >
+                              <Copy className="w-3 h-3" />
+                            </Button>
                           </CardTitle>
                         </div>
 
@@ -702,6 +826,19 @@ export default function AudioAuditDashboard() {
                             <Play className="w-4 h-4 fill-current" />
                           )}
                         </Button>
+                        {audioCache[noun.original] && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-500 hover:text-indigo-400"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadVariant(noun.original, noun.original);
+                            }}
+                          >
+                            <Download className="w-4 h-4" />
+                          </Button>
+                        )}
                         <CheckCircle2 className={`w-6 h-6 transition-colors ${!noun.selectedVariation ? "text-indigo-500" : "text-slate-700"}`} />
                       </div>
                     </div>
@@ -745,8 +882,20 @@ export default function AudioAuditDashboard() {
                                 }`}>
                                 <Check className="w-3 h-3" />
                               </div>
-                              <span className={`text-sm font-medium ${noun.selectedVariation === variant ? "text-white" : "text-slate-300"}`}>
+                              <span className={`text-sm font-medium flex items-center gap-2 ${noun.selectedVariation === variant ? "text-white" : "text-slate-300"}`}>
                                 {variant}
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 text-slate-500 hover:text-indigo-400 opacity-0 group-hover/item:opacity-100 transition-opacity"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(variant);
+                                    toast.success("Copied variation!");
+                                  }}
+                                >
+                                  <Copy className="w-3 h-3" />
+                                </Button>
                               </span>
                             </div>
                             <div className="flex items-center gap-1">
@@ -768,6 +917,19 @@ export default function AudioAuditDashboard() {
                                   <Play className="w-4 h-4 fill-current" />
                                 )}
                               </Button>
+                              {audioCache[variant] && (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-slate-500 hover:text-indigo-400"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDownloadVariant(variant, variant.replace(/\s+/g, "_"));
+                                  }}
+                                >
+                                  <Download className="w-4 h-4" />
+                                </Button>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -964,7 +1126,7 @@ export default function AudioAuditDashboard() {
                         <Percent className="w-3.5 h-3.5" />
                         Format %
                       </Button>
-                      <Button
+                      {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -977,8 +1139,37 @@ export default function AudioAuditDashboard() {
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         Clean CGPA
+                      </Button> */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+                          const updated = finalScript.replace(/\bTetr\b/g, "Tet-er");
+                          setFinalScript(updated);
+                          toast.success("Tetr fixed!");
+                        }}
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        Fix Tetr
                       </Button>
                       <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+                          // Adds ... after sentence-ending punctuation if followed by space, avoiding double adds
+                          const updated = finalScript.replace(/(?<=[.!?])\s+(?!\.\.\.)/g, " ... ");
+                          setFinalScript(updated);
+                          toast.success("Humanized pauses added!");
+                        }}
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        Humanize
+                      </Button>
+                      {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -991,8 +1182,8 @@ export default function AudioAuditDashboard() {
                       >
                         <Volume2 className="w-3.5 h-3.5" />
                         Space Punctuation
-                      </Button>
-                      <Button
+                      </Button> */}
+                      {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -1019,7 +1210,32 @@ export default function AudioAuditDashboard() {
                       >
                         <Sparkles className="w-3.5 h-3.5" />
                         Excite Ending
-                      </Button>
+                      </Button> */}
+                      {/* <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                        onClick={() => {
+                          if (!finalScript) return;
+
+                          // Split into sentences (simple logic based on punctuation)
+                          // This approach splits only when punctuation is followed by space, correctly ignoring decimal points
+                          const sentences = finalScript.split(/(?<=[.!?])\s+/);
+
+                          if (sentences.length > 0) {
+                            const paragraphs = [];
+                            for (let i = 0; i < sentences.length; i += 2) {
+                              paragraphs.push(sentences.slice(i, i + 2).join(" "));
+                            }
+                            const updated = paragraphs.join("\n\n");
+                            setFinalScript(updated);
+                            toast.success("Split into paragraphs!");
+                          }
+                        }}
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Split Paragraphs
+                      </Button> */}
                       <Button variant="ghost" size="sm" className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5" onClick={generateAuditedScript}>
                         <RotateCcw className="w-3.5 h-3.5" />
                         Regenerate
@@ -1100,10 +1316,140 @@ export default function AudioAuditDashboard() {
                       {/* Live Transcript / Word Scrubbing */}
                       {wordAlignments.length > 0 && (
                         <div className="space-y-3">
-                          <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
-                            <FileText className="w-3 h-3" />
-                            Live Transcript (Click word to scrub)
-                          </label>
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
+                              <FileText className="w-3 h-3" />
+                              Live Transcript (Click word to scrub)
+                            </label>
+                            <span className="text-[10px] text-slate-500 italic">Shift + Click for phrase selection</span>
+                          </div>
+
+                          {/* Selection Toolbar */}
+                          {selectionStart !== null && (
+                            <div className="space-y-3 p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl animate-in fade-in slide-in-from-top-1">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <div className="bg-indigo-500 p-1.5 rounded-lg">
+                                    <Sparkles className="w-4 h-4 text-white" />
+                                  </div>
+                                  <div>
+                                    <p className="text-xs font-bold text-white uppercase tracking-wider">
+                                      {selectionEnd !== null ? "Phrase Scratchpad" : "Word Selected"}
+                                    </p>
+                                    <p className="text-[10px] text-indigo-300">
+                                      {selectionEnd !== null
+                                        ? `Editing range: ${Math.min(selectionStart, selectionEnd)} - ${Math.max(selectionStart, selectionEnd)}`
+                                        : "Shift-click another word to select a range"}
+                                    </p>
+                                  </div>
+                                </div>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 text-[10px] text-slate-500 hover:text-white"
+                                  onClick={() => { setSelectionStart(null); setSelectionEnd(null); setTempPhraseVariation(""); }}
+                                >
+                                  Cancel
+                                </Button>
+                              </div>
+
+                              {selectionEnd !== null && (
+                                <div className="flex flex-col gap-3 pt-1">
+                                  <div className="flex items-center gap-2">
+                                    <Popover>
+                                      <PopoverTrigger asChild>
+                                        <Button
+                                          variant="outline"
+                                          className="h-10 px-3 bg-slate-950 border-slate-800 text-slate-400 hover:text-white flex items-center gap-2 shrink-0"
+                                        >
+                                          <Hash className="w-4 h-4" />
+                                          <span className="text-xs">Pronoun Shortcut</span>
+                                          <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
+                                        </Button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-56 p-2 bg-slate-900 border-slate-800 shadow-2xl">
+                                        <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar">
+                                          {extractedNouns.map((noun, nIdx) => (
+                                            <button
+                                              key={nIdx}
+                                              className="w-full text-left px-3 py-1.5 rounded-md text-xs text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-400 transition-colors flex items-center justify-between group/noun"
+                                              onClick={() => {
+                                                const approvedText = noun.selectedVariation || noun.customVariation || noun.original;
+                                                setTempPhraseVariation(approvedText);
+                                                toast.info(`Applied pronoun: "${approvedText}"`);
+                                              }}
+                                            >
+                                              <span className="truncate">{noun.original}</span>
+                                              <span className="text-[9px] text-slate-600 group-hover/noun:text-indigo-500/50 italic shrink-0">
+                                                {noun.selectedVariation || noun.customVariation ? "Approved" : "Default"}
+                                              </span>
+                                            </button>
+                                          ))}
+                                          {extractedNouns.length === 0 && (
+                                            <p className="px-3 py-4 text-[10px] text-slate-600 text-center">No pronouns analyzed yet.</p>
+                                          )}
+                                        </div>
+                                      </PopoverContent>
+                                    </Popover>
+                                    <Input
+                                      value={tempPhraseVariation}
+                                      onChange={(e) => setTempPhraseVariation(e.target.value)}
+                                      placeholder="Type phrase variation phonetic respelling..."
+                                      className="h-10 text-xs bg-slate-950 border-slate-800"
+                                    />
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      variant="outline"
+                                      className="flex-1 h-9 text-xs border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+                                      onClick={() => handleTryVariation(tempPhraseVariation)}
+                                    >
+                                      <Play className="w-4 h-4 mr-2" />
+                                      Try Selection
+                                    </Button>
+                                    <Button
+                                      className="flex-1 h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold"
+                                      onClick={handlePatchPhrase}
+                                      disabled={isPatching !== null}
+                                    >
+                                      {isPatching === -1 ? (
+                                        <Loader2 className="w-3 h-3 animate-spin mr-2" />
+                                      ) : (
+                                        <CheckCircle2 className="w-3 h-3 mr-2" />
+                                      )}
+                                      Patch Phrase
+                                    </Button>
+                                  </div>
+
+                                  {/* Special Case: Auditor Shortcut for Phrases */}
+                                  {extractedNouns.some(n =>
+                                    normalizeForMatch(n.original) === normalizeForMatch(tempPhraseVariation.trim())
+                                  ) && (
+                                      <div className="pt-2 border-t border-indigo-500/20">
+                                        <Button
+                                          variant="ghost"
+                                          className="w-full justify-start h-8 text-[10px] text-indigo-400 hover:bg-indigo-500/10 px-0"
+                                          onClick={() => {
+                                            const noun = extractedNouns.find(n =>
+                                              normalizeForMatch(n.original) === normalizeForMatch(tempPhraseVariation.trim())
+                                            );
+                                            if (noun) {
+                                              const approvedText = noun.selectedVariation || noun.customVariation || noun.original;
+                                              setTempPhraseVariation(approvedText);
+                                              toast.info(`Applied approved greeting: "${approvedText}"`);
+                                            }
+                                          }}
+                                          disabled={isPatching !== null}
+                                        >
+                                          <CheckCircle2 className="w-4 h-4 mr-2" />
+                                          Use Auditor Approved Greeting Variation
+                                        </Button>
+                                      </div>
+                                    )}
+                                </div>
+                              )}
+                            </div>
+                          )}
                           <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800/50 text-base leading-relaxed text-slate-400 flex flex-wrap gap-x-1.5 gap-y-1 max-h-[150px] overflow-y-auto custom-scrollbar">
                             {wordAlignments.map((alignment, idx) => {
                               const normTarget = normalizeForMatch(alignment.word);
@@ -1115,11 +1461,25 @@ export default function AudioAuditDashboard() {
 
                               return (
                                 <div key={idx} className="group/word relative py-1">
-                                  <Popover onOpenChange={(open) => {
-                                    if (open) setTempVariation(alignment.word.replace(/[.,!?]$/, "").trim());
-                                  }}>
-                                    <span
-                                      onClick={() => {
+                                  <span
+                                    onClick={(e) => {
+                                      if (e.shiftKey) {
+                                        if (selectionStart === null) {
+                                          setSelectionStart(idx);
+                                        } else {
+                                          setSelectionEnd(idx);
+                                          // Initialize phrase variation with current words
+                                          const start = Math.min(selectionStart, idx);
+                                          const end = Math.max(selectionStart, idx);
+                                          const text = wordAlignments.slice(start, end + 1).map(a => a.word).join(" ");
+                                          setTempPhraseVariation(text);
+                                        }
+                                      } else {
+                                        setSelectionStart(idx);
+                                        setSelectionEnd(null);
+                                        // Initialize variation for single word selection
+                                        setTempPhraseVariation(alignment.word.replace(/[.,!?]$/, "").trim());
+
                                         if (finalAudioRef.current) {
                                           finalAudioRef.current.currentTime = alignment.start;
                                           setCurrentTime(alignment.start);
@@ -1128,99 +1488,19 @@ export default function AudioAuditDashboard() {
                                             setIsPlayingFinal(true);
                                           }
                                         }
-                                      }}
-                                      className={`cursor-pointer transition-all px-1 rounded-lg hover:text-white hover:bg-slate-800 ${currentWordIndex === idx ? "text-indigo-400 bg-indigo-500/10 font-bold scale-110" : "text-slate-400"} ${isProperNoun ? "underline decoration-indigo-500/50 decoration-2 underline-offset-4" : ""}`}
-                                    >
-                                      {alignment.word}
-                                    </span>
-
-                                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 flex items-center gap-1 opacity-0 group-hover/word:opacity-100 transition-all z-10 px-1 py-0.5 bg-slate-900 border border-slate-800 rounded-full shadow-2xl">
-                                      {isProperNoun && (
-                                        <button
-                                          title="Quick Patch (Approved variation)"
-                                          className="p-1.5 hover:bg-indigo-500/10 text-indigo-400 rounded-full transition-transform hover:scale-110 disabled:opacity-50"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handlePatchWord(idx);
-                                          }}
-                                          disabled={isPatching !== null}
-                                        >
-                                          {isPatching === idx ? (
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                          ) : (
-                                            <Sparkles className="w-3 h-3 fill-current" />
-                                          )}
-                                        </button>
-                                      )}
-
-                                      <PopoverTrigger asChild>
-                                        <button
-                                          title="Custom Scratchpad"
-                                          className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-full transition-transform hover:scale-110"
-                                        >
-                                          <Edit2 className="w-3 h-3" />
-                                        </button>
-                                      </PopoverTrigger>
-                                    </div>
-
-                                    <PopoverContent className="w-64 bg-slate-900 border-slate-800 shadow-2xl p-4">
-                                      <div className="space-y-4">
-                                        <div className="flex items-center justify-between">
-                                          <h4 className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Word Scratchpad</h4>
-                                          <span className="text-[9px] text-slate-500 font-mono">idx: {idx}</span>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                          <Input
-                                            value={tempVariation}
-                                            onChange={(e) => setTempVariation(e.target.value)}
-                                            placeholder="Phonetic respelling..."
-                                            className="h-8 text-xs bg-slate-950 border-slate-800"
-                                          />
-                                          <div className="flex gap-2">
-                                            <Button
-                                              size="sm"
-                                              variant="outline"
-                                              className="flex-1 h-8 text-[10px] border-slate-800"
-                                              onClick={() => handleTryVariation(tempVariation)}
-                                            >
-                                              <Play className="w-3 h-3 mr-1.5" />
-                                              Try
-                                            </Button>
-                                            <Button
-                                              size="sm"
-                                              className="flex-1 h-8 text-[10px] bg-indigo-600 hover:bg-indigo-700"
-                                              onClick={() => handlePatchWord(idx, tempVariation)}
-                                              disabled={isPatching !== null}
-                                            >
-                                              {isPatching === idx ? (
-                                                <Loader2 className="w-3 h-3 animate-spin" />
-                                              ) : (
-                                                <>
-                                                  <Sparkles className="w-3 h-3 mr-1.5" />
-                                                  Patch
-                                                </>
-                                              )}
-                                            </Button>
-                                          </div>
-                                        </div>
-
-                                        {isProperNoun && (
-                                          <div className="pt-2 border-t border-slate-800/50">
-                                            <Button
-                                              variant="ghost"
-                                              className="w-full justify-start h-7 text-[9px] text-indigo-400 hover:bg-indigo-500/10 px-0"
-                                              onClick={() => handlePatchWord(idx)}
-                                              disabled={isPatching !== null}
-                                            >
-                                              <CheckCircle2 className="w-3 h-3 mr-2" />
-                                              Use Auditor Approved Choice
-                                            </Button>
-                                          </div>
-                                        )}
-                                      </div>
-                                    </PopoverContent>
-                                  </Popover>
+                                      }
+                                    }}
+                                    className={`cursor-pointer transition-all px-1.5 rounded-lg hover:text-white hover:bg-slate-800 
+                                      ${currentWordIndex === idx ? "text-indigo-400 bg-indigo-500/10 font-bold scale-105" : "text-slate-400"} 
+                                      ${isProperNoun ? "underline decoration-indigo-500/50 decoration-2 underline-offset-4" : ""}
+                                      ${(selectionStart !== null && selectionEnd !== null) &&
+                                        ((idx >= Math.min(selectionStart, selectionEnd) && idx <= Math.max(selectionStart, selectionEnd)))
+                                        ? "bg-indigo-500/40 text-white ring-1 ring-indigo-500/50"
+                                        : selectionStart === idx ? "bg-indigo-500/20 text-white" : ""}
+                                    `}
+                                  >
+                                    {alignment.word}
+                                  </span>
                                 </div>
                               );
                             })}
@@ -1325,6 +1605,6 @@ export default function AudioAuditDashboard() {
           </div>
         )}
       </main>
-    </div>
+    </div >
   );
 }
