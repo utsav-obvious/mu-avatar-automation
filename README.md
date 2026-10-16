@@ -88,6 +88,7 @@ node review-tool/cli/prepare-set.mjs review-tool/sets/<slug>.json --upload   # c
 - **Edit** — rewrite the sentence; name spellings and number readings are re-applied automatically.
 - **Delete** — removes a sentence (Undo for 10 s).
 - **Approve & download** — downloads the WAV and marks the script approved (its audio is stored for later patches). Approved scripts don't regenerate audio when opened.
+- **Red "Listen to the whole script" box** — the script was regenerated after it was delivered, so *any* sentence may sound different now, not only the one you fix. Play it through: you can go back but not skip ahead, and Approve (or *Confirm full listen*) unlocks once every sentence has been heard. Sentence numbers turn green as you hear them.
 - **Patch an approved script** (e.g. client feedback, shown in an amber box with suggested fixes):
   1. Open it — the approved audio loads from storage. Older scripts: drop in the WAV that was downloaded for it (it stays in your browser; the tool refuses a file whose pauses don't match the script).
   2. *Use suggestion* (or Fix / Edit any sentence) → *Generate new take* → *Keep new*. Only that sentence changes.
@@ -112,7 +113,7 @@ Production env vars (Vercel → Settings → Environment Variables): `ELEVEN_LAB
 |---|---|
 | `src/app/review/` | Review tool UI: `ReviewApp.tsx` (screen), `FixPanel.tsx` (fix/edit), `audio.ts` (generation, cache, joining, pauses), `actions.ts` (server actions), `api/tts/route.ts` (ElevenLabs proxy), `api/clips/route.ts` (stored approved clips) |
 | `src/lib/review/` | Server helpers (Supabase, passcode) and shared types |
-| `review-tool/cli/` | Offline tooling: `prepare-set.mjs`, `library.mjs`, `changes.mjs`, `import-feedback.mjs` (client comments), `audio.mjs` (stored-audio usage / purge) |
+| `review-tool/cli/` | Offline tooling: `prepare-set.mjs`, `library.mjs`, `changes.mjs`, `import-feedback.mjs` (client comments), `audio.mjs` (stored-audio usage / purge), `full-listen.mjs` (flag regenerated scripts) |
 | `review-tool/sets/` | One spec per set (`<slug>.json`) + exactly what was uploaded (`<slug>.prepared.json`) |
 | `review-tool/schema.sql` | Supabase schema (sets, scripts, pronunciation_library, sentence_changes) |
 | `c8-scripts/` | Source CSVs — **student data, git-ignored** (the repo is public). Get them from the team; not in a fresh clone |

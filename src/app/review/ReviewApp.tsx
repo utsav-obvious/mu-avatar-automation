@@ -3,14 +3,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertCircle, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDot, Download, FileAudio, Loader2, MessageSquare, Pause, Pencil, Play, RotateCcw, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
+import { AlertCircle, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDot, Download, FileAudio, Headphones, Loader2, MessageSquare, Pause, Pencil, Play, RotateCcw, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ChangeLogEntry, LibraryEntry, ReviewScript, ReviewSet, ScriptStatus, Sentence } from "@/lib/review/types";
-import { logChanges, markInReview, saveLibraryEntry, savePatch, saveSentences, setScriptStatus, setStoredClips } from "./actions";
-import { audioFromDelivered, AuthError, fitToOriginal, isLoaded, loadScriptAudio, loadStoredAudio, parseWav, requestsFor, storeClips, withFreshUrl, type ScriptAudio } from "./audio";
+import { confirmFullListen, logChanges, markInReview, saveLibraryEntry, savePatch, saveSentences, setScriptStatus, setStoredClips } from "./actions";
+import { audioFromDelivered, AuthError, fitToOriginal, hasStoredAudio, isLoaded, loadScriptAudio, loadStoredAudio, parseWav, requestsFor, storeClips, withFreshUrl, type ScriptAudio } from "./audio";
 import FixPanel, { type TakeInfo } from "./FixPanel";
 
 const SPEEDS = [1, 1.25, 1.5];
+// Full-listen rule: a sentence counts as heard once this share of it has played without skipping.
+const HEARD_SHARE = 0.9;
 // Preparing the next script in the background spends credits before anyone opens it.
 // Off until the tool is final; flip to true to re-enable.
 const PREFETCH_NEXT_SCRIPT = false;
@@ -130,6 +132,12 @@ export default function ReviewApp({
     const [storedFailed, setStoredFailed] = useState<Set<string>>(() => new Set());
     const [uploadError, setUploadError] = useState<string | null>(null);
     const patchUrls = useRef<string[]>([]); // blob URLs made for patching (not in the audio LRU) — freed on leave
+    // Full-listen rule (scripts regenerated after delivery): which sentences have really been heard, and
+    // how far playback has got without skipping — nothing past `reached` can be jumped to.
+    const [heard, setHeard] = useState<Set<number>>(() => new Set());
+    const [reached, setReached] = useState<{ index: number; offset: number }>({ index: 0, offset: 0 });
+    const heardTimeRef = useRef<number[]>([]);
+    const lastTickRef = useRef<number | null>(null);
     const [audioUnlocked, setAudioUnlocked] = useState<string | null>(null); // approved script allowed to load audio
     const pendingDownloadRef = useRef<string | null>(null);
     const reviewer = useSyncExternalStore(subscribeReviewer, readReviewer, () => null); // null until hydrated
@@ -164,6 +172,19 @@ export default function ReviewApp({
     const shownSentences = (patching ? patch!.sentences : activeScript?.sentences) ?? [];
     const storedLoading = approved && !audio && !!activeScript?.stored_clips?.length
         && !storedFailed.has(activeScript.id) && audioUnlocked !== activeScript.id;
+
+    const listenRequired = !!activeScript?.full_listen && !!audio;
+    const heardCount = shownSentences.filter((_, i) => heard.has(i)).length;
+    const allHeard = heardCount === shownSentences.length;
+    // First sentence that can't be jumped to yet (null = nothing locked).
+    const lockedFrom = useMemo(() => {
+        if (!listenRequired || !audio) return null;
+        const index = Math.min(reached.index, audio.starts.length - 1);
+        const reachedTime = audio.starts[index] + reached.offset;
+        const i = audio.starts.findIndex((start, k) => k > index && start > reachedTime + 0.05);
+        return i < 0 ? null : i;
+    }, [listenRequired, audio, reached]);
+    const isLocked = (i: number) => lockedFrom !== null && i >= lockedFrom;
 
     const currentIdx = useMemo(() => {
         if (!audio) return null;
@@ -256,17 +277,64 @@ export default function ReviewApp({
         return () => window.removeEventListener("beforeunload", warn);
     }, [unsavedPatch]);
 
-    // Smooth highlight while playing.
+    // Counts only continuous playback: pauses and jumps (any step over 0.5 s) aren't listening.
+    const trackListening = useCallback((a: ScriptAudio, t: number) => {
+        const last = lastTickRef.current;
+        lastTickRef.current = t;
+        if (last === null) return;
+        const dt = t - last;
+        if (dt <= 0 || dt > 0.5) return;
+        let i = 0;
+        a.starts.forEach((start, k) => { if (last + 1e-3 >= start) i = k; });
+        const offset = t - a.starts[i];
+        setReached(r => (i > r.index || (i === r.index && offset > r.offset) ? { index: i, offset } : r));
+        if (last >= a.ends[i]) return; // the pause after sentence i
+        const time = (heardTimeRef.current[i] ?? 0) + dt;
+        heardTimeRef.current[i] = time;
+        if (time >= HEARD_SHARE * (a.ends[i] - a.starts[i])) setHeard(prev => (prev.has(i) ? prev : new Set(prev).add(i)));
+    }, []);
+
+    // Smooth highlight while playing, and listening progress.
     useEffect(() => {
         if (!playing) return;
         let raf = 0;
+        lastTickRef.current = null;
         const tick = () => {
-            if (audioRef.current) setCurrentTime(audioRef.current.currentTime);
+            const el = audioRef.current;
+            if (el) {
+                setCurrentTime(el.currentTime);
+                if (audio) trackListening(audio, el.currentTime);
+            }
             raf = requestAnimationFrame(tick);
         };
         raf = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(raf);
-    }, [playing]);
+    }, [playing, audio, trackListening]);
+
+    const resetListening = () => {
+        heardTimeRef.current = [];
+        lastTickRef.current = null;
+        setHeard(new Set());
+        setReached({ index: 0, offset: 0 });
+    };
+
+    // Replaced sentences must be heard again (the reviewer can always go back to them).
+    const forgetSentences = (indexes: number[]) => {
+        if (!indexes.length) return;
+        indexes.forEach(i => { heardTimeRef.current[i] = 0; });
+        setHeard(prev => new Set([...prev].filter(i => !indexes.includes(i))));
+        setReached(r => (indexes.includes(r.index) ? { index: r.index, offset: 0 } : r));
+    };
+
+    // Sentence `at` removed (shift = -1) or put back (shift = +1): keep progress on the others.
+    const shiftListening = (at: number, shift: 1 | -1) => {
+        if (shift < 0) heardTimeRef.current.splice(at, 1);
+        else heardTimeRef.current.splice(at, 0, 0);
+        setHeard(prev => new Set([...prev].filter(i => shift > 0 || i !== at).map(i => (i > at || (shift > 0 && i === at) ? i + shift : i))));
+        setReached(r => (r.index > at || (shift > 0 && r.index === at) ? { index: r.index + shift, offset: r.offset } : r.index === at ? { index: at, offset: 0 } : r));
+    };
+
+    const lockedMessage = () => toast.info(`Listen in order — no skipping ahead. Carry on from sentence ${reached.index + 1}.`);
 
     useEffect(() => {
         if (playing && currentIdx !== null) sentenceRefs.current[currentIdx]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -281,6 +349,7 @@ export default function ReviewApp({
         setPatch(null);
         setUploadError(null);
         setFixPrefill(null);
+        resetListening();
     };
 
     const openScript = (script: ReviewScript) => {
@@ -332,10 +401,14 @@ export default function ReviewApp({
         const el = audioRef.current;
         if (!el || !audio) return;
         const idx = Math.max(0, Math.min(i, audio.starts.length - 1));
+        if (lockedFrom !== null && idx >= lockedFrom) {
+            toast.info(`Listen in order — no skipping ahead. Carry on from sentence ${reached.index + 1}.`);
+            return;
+        }
         el.currentTime = audio.starts[idx];
         setCurrentTime(audio.starts[idx]);
         el.play().catch(() => {});
-    }, [audio]);
+    }, [audio, lockedFrom, reached.index]);
 
     const changeRate = (r: number) => {
         setRate(r);
@@ -343,11 +416,15 @@ export default function ReviewApp({
     };
 
     const openFix = useCallback((i: number, mode: "fix" | "edit" = "fix", prefill: { original: string; spoken: string } | null = null) => {
+        if (lockedFrom !== null && i >= lockedFrom) {
+            toast.info(`Listen in order — no skipping ahead. Carry on from sentence ${reached.index + 1}.`);
+            return;
+        }
         audioRef.current?.pause();
         setFixIndex(i);
         setFixMode(mode);
         setFixPrefill(prefill);
-    }, []);
+    }, [lockedFrom, reached.index]);
 
     // Saves a script's new sentence list. The audio effect then rebuilds it from cache — only a
     // changed sentence is ever new; neighbours keep their exact takes via frozen context.
@@ -427,6 +504,7 @@ export default function ReviewApp({
             resumeAtRef.current = Math.max(0, index - 1);
             setAudio(next);
             setPatch({ ...patch, sentences, changed: [...new Set([...patch.changed, index])].sort((a, b) => a - b) });
+            forgetSentences([index]);
             setFixIndex(null);
             setFixPrefill(null);
             toast.success(`Sentence ${index + 1} replaced — download the patched WAV to save it`);
@@ -436,6 +514,7 @@ export default function ReviewApp({
                 message: entry ? `${message} · “${entry.term}” added to library` : message,
                 resumeAt: Math.max(0, index - 1),
             });
+            if (saved) forgetSentences([index]);
         }
         if (saved) {
             logChange(activeScript, [{
@@ -483,14 +562,18 @@ export default function ReviewApp({
             message: `Sentence ${i + 1} deleted`,
             resumeAt: Math.max(0, i - 1),
             undo: before,
-            onUndone: () => logChange(script, [{
-                action: "undo",
-                sentence_index: i,
-                after_original: removed.original,
-                after_spoken: removed.spoken,
-            }]),
+            onUndone: () => {
+                shiftListening(i, 1);
+                logChange(script, [{
+                    action: "undo",
+                    sentence_index: i,
+                    after_original: removed.original,
+                    after_spoken: removed.spoken,
+                }]);
+            },
         });
         if (saved) {
+            shiftListening(i, -1);
             logChange(script, [{
                 action: "delete",
                 sentence_index: i,
@@ -516,6 +599,8 @@ export default function ReviewApp({
         try {
             await setScriptStatus(script.id, "approved");
             setStatuses(prev => ({ ...prev, [script.id]: "approved" }));
+            override(script.id, { full_listen: null });
+            logChange(script, [{ action: "approve", sentence_index: null }]);
             setPatch({ scriptId: script.id, base: approvedAudio, sentences: script.sentences, changed: [] });
             toast.success(`${script.student_name} approved and downloaded`);
             // Keep the exact clips, so a later fix regenerates only the changed sentence.
@@ -537,12 +622,19 @@ export default function ReviewApp({
 
     const reopen = async () => {
         if (!activeScript || !confirmLeavePatch()) return;
-        const id = activeScript.id;
+        const script = activeScript, id = script.id;
         setPatch(null);
         setFixPrefill(null);
         setStatusBusy(true);
         try {
-            await setScriptStatus(id, "in_review");
+            // Without stored clips every sentence is regenerated and may differ from the delivered file.
+            const regenerated = !(await hasStoredAudio(script).catch(() => false));
+            const listen = await setScriptStatus(id, "in_review", regenerated
+                ? { reason: "Reopened after approval — every sentence was regenerated.", by: reviewer || "unknown" }
+                : undefined);
+            if (listen !== undefined) override(id, { full_listen: listen });
+            logChange(script, [{ action: "reopen", sentence_index: null }]);
+            resetListening();
             if (!audio) autoplayRef.current = true; // audio starts generating now that it's back in review
             setStatuses(prev => ({ ...prev, [id]: "in_review" }));
         } catch {
@@ -572,9 +664,26 @@ export default function ReviewApp({
         }
     };
 
+    const confirmListen = async () => {
+        if (!activeScript) return;
+        const script = activeScript;
+        setStatusBusy(true);
+        try {
+            await confirmFullListen(script.id);
+            override(script.id, { full_listen: null });
+            logChange(script, [{ action: "listen", sentence_index: null }]);
+            toast.success("Full listen confirmed");
+        } catch {
+            toast.error("Couldn't save the confirmation — try again.");
+        } finally {
+            setStatusBusy(false);
+        }
+    };
+
     const discardPatch = () => {
         if (!patch || !window.confirm("Discard the replaced sentences and go back to the delivered audio?")) return;
         audioRef.current?.pause();
+        forgetSentences(patch.changed);
         setFixIndex(null);
         setAudio(patch.base);
         setPatch({ ...patch, sentences: activeScript?.sentences ?? patch.sentences, changed: [] });
@@ -766,7 +875,18 @@ export default function ReviewApp({
                                             <Button size="sm" variant="ghost" disabled={statusBusy} onClick={reopen} className="text-slate-400">
                                                 <Undo2 />Reopen
                                             </Button>
-                                            {nextUnapproved && (
+                                            {activeScript.full_listen && (
+                                                <Button
+                                                    size="sm"
+                                                    disabled={!audio || !allHeard || statusBusy}
+                                                    onClick={confirmListen}
+                                                    title={audio && !allHeard ? "Listen to every sentence first" : undefined}
+                                                    className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                                >
+                                                    <Headphones />Confirm full listen{audio ? ` (${heardCount}/${shownSentences.length})` : ""}
+                                                </Button>
+                                            )}
+                                            {nextUnapproved && !activeScript.full_listen && (
                                                 <Button size="sm" onClick={() => openScript(nextUnapproved)} className="bg-indigo-600 hover:bg-indigo-700 text-white">
                                                     Next script<ArrowRight />
                                                 </Button>
@@ -775,16 +895,34 @@ export default function ReviewApp({
                                     ) : (
                                         <Button
                                             size="sm"
-                                            disabled={!audio || statusBusy || fixIndex !== null}
+                                            disabled={!audio || statusBusy || fixIndex !== null || (listenRequired && !allHeard)}
                                             onClick={approve}
-                                            title={fixIndex !== null ? "Close the open panel first" : undefined}
+                                            title={fixIndex !== null ? "Close the open panel first" : listenRequired && !allHeard ? "Listen to every sentence first" : undefined}
                                             className="bg-emerald-600 hover:bg-emerald-700 text-white"
                                         >
                                             {statusBusy ? <Loader2 className="animate-spin" /> : <Check />}Approve &amp; download
+                                            {listenRequired && !allHeard && ` (${heardCount}/${shownSentences.length} heard)`}
                                         </Button>
                                     )}
                                 </div>
                             </div>
+
+                            {activeScript.full_listen && (
+                                <div className="mb-5 rounded-xl border border-red-500/30 bg-red-500/5 p-4 text-sm flex items-start gap-2.5">
+                                    <Headphones className="w-4 h-4 mt-0.5 shrink-0 text-red-300" />
+                                    <div className="min-w-0 flex-1 space-y-1">
+                                        <p className="text-slate-100 font-medium">Listen to the whole script before {approved ? "confirming" : "approving"}</p>
+                                        <p className="text-slate-300">
+                                            {activeScript.full_listen.reason} Any sentence may now sound different from the delivered file — not only
+                                            the one you&apos;re fixing. Play it from the start: you can go back, but not skip ahead, and{" "}
+                                            {approved ? "Confirm full listen" : "Approve"} unlocks once every sentence has been heard.
+                                        </p>
+                                        <p className="text-xs text-slate-500">
+                                            {audio ? `${heardCount} of ${shownSentences.length} sentences heard` : "Load the audio to start"} · flagged {activeScript.full_listen.at.slice(0, 10)} by {activeScript.full_listen.by}
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
 
                             {activeScript.feedback && (() => {
                                 const f = activeScript.feedback;
@@ -927,7 +1065,15 @@ export default function ReviewApp({
                                             step={0.01}
                                             value={currentTime}
                                             onChange={e => {
-                                                const t = Number(e.target.value);
+                                                let t = Number(e.target.value);
+                                                if (lockedFrom !== null) {
+                                                    const index = Math.min(reached.index, audio.starts.length - 1);
+                                                    const limit = audio.starts[index] + reached.offset;
+                                                    if (t > limit) {
+                                                        t = limit;
+                                                        lockedMessage();
+                                                    }
+                                                }
                                                 if (audioRef.current) audioRef.current.currentTime = t;
                                                 setCurrentTime(t);
                                             }}
@@ -964,6 +1110,8 @@ export default function ReviewApp({
                                     const newParagraph = i > 0 && sentence.paragraph !== shownSentences[i - 1].paragraph;
                                     const replaced = patching && patch!.changed.includes(i);
                                     const flagged = feedbackState(activeScript) === "open" && activeScript.feedback!.suggestions.some(sg => sg.index === i);
+                                    const locked = isLocked(i);
+                                    const wasHeard = listenRequired && heard.has(i);
                                     return (
                                         <li key={i} className={newParagraph ? "pt-4" : ""}>
                                             <div className={`group flex items-start rounded-xl border-l-2 transition-colors ${current ? "bg-indigo-500/10 border-indigo-400" : "border-transparent hover:bg-slate-900"}`}>
@@ -971,10 +1119,11 @@ export default function ReviewApp({
                                                     ref={el => { sentenceRefs.current[i] = el; }}
                                                     onClick={() => playSentence(i)}
                                                     disabled={!audio}
-                                                    className="flex-1 min-w-0 text-left px-4 py-3 disabled:cursor-default"
+                                                    title={locked ? "Not heard yet — listen in order" : undefined}
+                                                    className={`flex-1 min-w-0 text-left px-4 py-3 disabled:cursor-default ${locked ? "opacity-50 cursor-not-allowed" : ""}`}
                                                 >
                                                     <div className="flex gap-3">
-                                                        <span className={`text-xs tabular-nums pt-1 w-5 shrink-0 ${current ? "text-indigo-300" : flagged ? "text-amber-300" : "text-slate-600"}`}>{i + 1}</span>
+                                                        <span className={`text-xs tabular-nums pt-1 w-5 shrink-0 ${current ? "text-indigo-300" : flagged ? "text-amber-300" : wasHeard ? "text-emerald-400" : "text-slate-600"}`} title={wasHeard ? "Heard" : undefined}>{i + 1}</span>
                                                         <div className="min-w-0">
                                                             <p className={`leading-relaxed ${current ? "text-white" : "text-slate-300"}`}>
                                                                 {sentence.original}
@@ -992,7 +1141,7 @@ export default function ReviewApp({
                                                     <Button
                                                         size="sm"
                                                         variant="ghost"
-                                                        disabled={!audio}
+                                                        disabled={!audio || locked}
                                                         onClick={() => (fixIndex === i && fixMode === "fix" ? setFixIndex(null) : openFix(i, "fix"))}
                                                         className="text-slate-400 hover:text-white"
                                                         title="Fix pronunciation (F)"
@@ -1002,7 +1151,7 @@ export default function ReviewApp({
                                                     <Button
                                                         size="icon-sm"
                                                         variant="ghost"
-                                                        disabled={!audio}
+                                                        disabled={!audio || locked}
                                                         onClick={() => (fixIndex === i && fixMode === "edit" ? setFixIndex(null) : openFix(i, "edit"))}
                                                         className="text-slate-400 hover:text-white"
                                                         title="Edit sentence text (E)"

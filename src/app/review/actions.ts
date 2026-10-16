@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import Anthropic from "@anthropic-ai/sdk";
 import { AUDIO_BUCKET, CLIP_KEY, db, isAuthed, passcodeMatches, sessionToken, SESSION_COOKIE } from "@/lib/review/server";
-import type { ChangeLogEntry, PatchRecord, ScriptStatus, Sentence, SpellingOption } from "@/lib/review/types";
+import type { ChangeLogEntry, FullListen, PatchRecord, ScriptStatus, Sentence, SpellingOption } from "@/lib/review/types";
 
 async function requireAuth() {
     if (!(await isAuthed())) throw new Error("Not signed in.");
@@ -145,19 +145,37 @@ Never repeat "${selected}" itself.`,
         .slice(0, 5);
 }
 
-// Approve (or reopen) a script. Approving records the time; reopening clears it.
-export async function setScriptStatus(scriptId: string, status: "approved" | "in_review"): Promise<void> {
+// Approve (or reopen) a script. Approving records the time and ends any full-listen requirement;
+// reopening clears the time and — when the audio will be regenerated — requires a full listen.
+export async function setScriptStatus(
+    scriptId: string,
+    status: "approved" | "in_review",
+    fullListen?: { reason: string; by: string }
+): Promise<FullListen | null | undefined> {
     await requireAuth();
     if (status !== "approved" && status !== "in_review") throw new Error("Invalid status.");
     const now = new Date().toISOString();
+    const listen: FullListen | null | undefined = status === "approved" ? null
+        : fullListen ? { reason: String(fullListen.reason).slice(0, 300), at: now, by: String(fullListen.by ?? "").slice(0, 100) || "unknown" }
+        : undefined; // unchanged
     const { error } = await db()
         .from("scripts")
-        .update({ status, approved_at: status === "approved" ? now : null, updated_at: now })
+        .update({ status, approved_at: status === "approved" ? now : null, updated_at: now, ...(listen !== undefined ? { full_listen: listen } : {}) })
         .eq("id", scriptId);
+    if (error) throw error;
+    return listen;
+}
+
+// An approved script flagged for a full listen: a reviewer has now heard every sentence.
+export async function confirmFullListen(scriptId: string): Promise<void> {
+    await requireAuth();
+    const { error } = await db().from("scripts")
+        .update({ full_listen: null, updated_at: new Date().toISOString() })
+        .eq("id", scriptId).eq("status", "approved");
     if (error) throw error;
 }
 
-const CHANGE_ACTIONS = new Set(["take", "fix", "edit", "delete", "undo"]);
+const CHANGE_ACTIONS = new Set(["take", "fix", "edit", "delete", "undo", "approve", "reopen", "listen"]);
 const TEXT_FIELDS = ["before_original", "before_spoken", "after_original", "after_spoken", "library_term", "library_spoken"] as const;
 
 // Append reviewer actions to the change log. Never blocks the reviewer: callers fire and forget.

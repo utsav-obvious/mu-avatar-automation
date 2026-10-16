@@ -83,3 +83,13 @@ alter table public.scripts add column if not exists patches jsonb not null defau
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('review-audio', 'review-audio', false, 5242880)
 on conflict (id) do nothing;
+
+-- Migration (2026-10-16b): full-listen rule for regenerated re-reviews.
+-- Reopening an approved script without stored clips regenerates every sentence, so any of them may now
+-- differ from the delivered file. Such scripts carry `full_listen` until a reviewer has heard every
+-- sentence (Approve / "Confirm full listen" stay locked until then). Approve, reopen and confirmed
+-- full listens are now logged too.
+alter table public.scripts add column if not exists full_listen jsonb; -- { reason, at, by } while a full listen is required
+alter table public.sentence_changes drop constraint if exists sentence_changes_action_check;
+alter table public.sentence_changes add constraint sentence_changes_action_check
+    check (action in ('take', 'fix', 'edit', 'delete', 'undo', 'approve', 'reopen', 'listen'));

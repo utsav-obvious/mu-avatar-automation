@@ -40,6 +40,15 @@ export interface ReviewScript {
     stored_clips: string[]; // keys of the approved clips kept in storage (audio.ts clipKey)
     feedback: ClientFeedback | null;
     patches: PatchRecord[];
+    full_listen: FullListen | null;
+}
+
+// Set while every sentence must be heard before approving: the script was regenerated after delivery,
+// so any sentence may differ from the delivered file — not only the one being fixed.
+export interface FullListen {
+    reason: string;
+    at: string;
+    by: string;
 }
 
 // Client comments on a delivered script, imported offline (review-tool/cli/import-feedback.mjs) with
@@ -79,7 +88,7 @@ export interface NounOptions {
     options: SpellingOption[]; // first = default spelling sent at upload time
 }
 
-export type ChangeAction = "take" | "fix" | "edit" | "delete" | "undo";
+export type ChangeAction = "take" | "fix" | "edit" | "delete" | "undo" | "approve" | "reopen" | "listen";
 
 // One row of the append-only reviewer change log (sentence_changes). A take counts as kept when
 // a fix/edit row references its take_id.
