@@ -2,8 +2,8 @@
 
 import { cookies } from "next/headers";
 import Anthropic from "@anthropic-ai/sdk";
-import { db, isAuthed, passcodeMatches, sessionToken, SESSION_COOKIE } from "@/lib/review/server";
-import type { ChangeLogEntry, ScriptStatus, Sentence, SpellingOption } from "@/lib/review/types";
+import { AUDIO_BUCKET, CLIP_KEY, db, isAuthed, passcodeMatches, sessionToken, SESSION_COOKIE } from "@/lib/review/server";
+import type { ChangeLogEntry, PatchRecord, ScriptStatus, Sentence, SpellingOption } from "@/lib/review/types";
 
 async function requireAuth() {
     if (!(await isAuthed())) throw new Error("Not signed in.");
@@ -184,4 +184,71 @@ export async function logChanges(entries: ChangeLogEntry[]): Promise<void> {
     });
     const { error } = await db().from("sentence_changes").insert(rows);
     if (error) throw error;
+}
+
+// ---------- stored clips & patches ----------
+
+const isClipKeys = (keys: unknown): keys is string[] =>
+    Array.isArray(keys) && keys.length <= 200 && keys.every(k => typeof k === "string" && CLIP_KEY.test(k));
+
+// Records which clips in storage make up the approved version, then deletes the script's other clips
+// (older takes of patched sentences) so the bucket only holds what can still be downloaded.
+async function replaceStoredClips(scriptId: string, keys: string[]): Promise<void> {
+    const bucket = db().storage.from(AUDIO_BUCKET);
+    const { data: objects, error: listError } = await bucket.list(scriptId, { limit: 1000 });
+    if (listError) throw listError;
+    const keep = new Set(keys.map(k => `${k}.pcm`));
+    const stale = objects.filter(o => !keep.has(o.name)).map(o => `${scriptId}/${o.name}`);
+    if (stale.length) {
+        const { error } = await bucket.remove(stale);
+        if (error) console.warn(`Couldn't remove stale clips of ${scriptId}: ${error.message}`);
+    }
+}
+
+// Called after an approval's clips are uploaded: the script can now be patched without regenerating.
+export async function setStoredClips(scriptId: string, keys: string[]): Promise<void> {
+    await requireAuth();
+    if (!isClipKeys(keys)) throw new Error("Invalid clip keys.");
+    const { error } = await db().from("scripts").update({ stored_clips: keys }).eq("id", scriptId);
+    if (error) throw error;
+    await replaceStoredClips(scriptId, keys);
+}
+
+export interface PatchInput {
+    sentences: number[];
+    length: PatchRecord["length"];
+    source: PatchRecord["source"];
+    file: string;
+    by: string;
+}
+
+// Saves a patched download of an approved script: the new sentence text, a patch record, and — when the
+// new clips were uploaded — the stored clip list. The script stays approved.
+export async function savePatch(scriptId: string, sentences: Sentence[], input: PatchInput, storedClips: string[] | null): Promise<PatchRecord[]> {
+    await requireAuth();
+    if (!Array.isArray(sentences) || !sentences.length || !sentences.every(isSentence)) throw new Error("Invalid sentences.");
+    if (!Array.isArray(input.sentences) || !input.sentences.every(i => Number.isInteger(i) && i >= 0 && i < sentences.length)
+        || !["natural", "original"].includes(input.length) || !["generated", "stored", "upload"].includes(input.source)) {
+        throw new Error("Invalid patch.");
+    }
+    if (storedClips !== null && (!isClipKeys(storedClips) || storedClips.length !== sentences.length)) throw new Error("Invalid clip keys.");
+
+    const { data: current, error: readError } = await db().from("scripts").select("status, patches").eq("id", scriptId).single();
+    if (readError) throw readError;
+    if (current.status !== "approved") throw new Error("Only approved scripts can be patched.");
+    const record: PatchRecord = {
+        at: new Date().toISOString(),
+        by: String(input.by ?? "").slice(0, 100) || "unknown",
+        sentences: input.sentences,
+        length: input.length,
+        source: input.source,
+        file: String(input.file ?? "").slice(0, 300),
+    };
+    const patches = [...((current.patches as PatchRecord[] | null) ?? []), record];
+    const { error } = await db().from("scripts")
+        .update({ sentences, patches, ...(storedClips ? { stored_clips: storedClips } : {}), updated_at: record.at })
+        .eq("id", scriptId);
+    if (error) throw error;
+    if (storedClips) await replaceStoredClips(scriptId, storedClips).catch(err => console.warn(err));
+    return patches;
 }

@@ -53,6 +53,7 @@ next-env.d.ts
 /c8-scripts/
 /review-tool/sets/*.prepared.json
 /review-tool/sets/*.preview.json
+/review-tool/feedback/
 /candidate-grid/candidates.json
 /candidate-grid/results.json
 /v4-test/rewrites.json

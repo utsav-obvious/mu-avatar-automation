@@ -18,24 +18,27 @@ Live: https://mu-avatar-automation.vercel.app/review
 ## How it works
 
 ```
-CSV of scripts ──► prepare offline (Claude Code + review-tool/cli) ──► Supabase (text only)
+CSV of scripts ──► prepare offline (Claude Code + review-tool/cli) ──► Supabase (text)
                                                                           │
               reviewer opens /review ──► audio generated per sentence (ElevenLabs v2, in parallel)
                                                                           │
               listen (sentence highlighted) ──► Fix / Edit / Delete a sentence ──► Approve & download WAV
                                                                           │
               every fix is logged (sentence_changes) ──► analysed before the next set ──► better prep
+
+client comments on the videos ──► import-feedback (suggested fixes) ──► patch one sentence ──► download _v2 WAV
 ```
 
 - **Text preparation happens offline, once per set.** Indian names and Hindi/Sanskrit institution names are rewritten in Devanagari, decimals are read digit by digit (`8.87` → `8 point 8 7`), `%` gets a space, approved spellings from the pronunciation library are applied, and the text is split into sentences. Every name/acronym also gets 3–5 prepared **spelling options** for one-click fixes.
-- **Audio is generated on demand** when a reviewer opens a script — every sentence at once, each with its neighbours' text as context so the joins are seamless — and cached in that browser. **No audio is stored server-side.**
+- **Audio is generated on demand** when a reviewer opens a script — every sentence at once, each with its neighbours' text as context so the joins are seamless — and cached in that browser. **On approval, the exact sentence clips are stored** (private Supabase bucket) so the script can be patched later without regenerating it; delete a set's clips once its videos are done.
 - **Fixing a sentence regenerates only that sentence**; neighbours keep their exact audio.
 - **Approve** joins the sentences (0.5 s pause between sentences, 0.6 s between paragraphs) into a WAV named `<SetPrefix>_<ApplicationNo>_<Student-Name>.wav`. Reviewers share files themselves (Drive etc.).
 - **Every reviewer action is logged** so recurring fixes become preparation rules and library entries.
+- **Patching a delivered script** (client feedback on the video): only the flagged sentence is regenerated and spliced into the delivered audio — every other sample is identical — and downloaded as `…_v2.wav`. The script stays approved.
 
 ### Stack
 
-Next.js 16 (App Router) · TypeScript · Tailwind · Supabase (Postgres, text only) · ElevenLabs `eleven_multilingual_v2` · Claude (`claude-opus-5-5`, spelling fallback only) · Vercel.
+Next.js 16 (App Router) · TypeScript · Tailwind · Supabase (Postgres for text, Storage for approved clips) · ElevenLabs `eleven_multilingual_v2` · Claude (`claude-opus-5-5`, spelling fallback only) · Vercel.
 
 ---
 
@@ -84,7 +87,11 @@ node review-tool/cli/prepare-set.mjs review-tool/sets/<slug>.json --upload   # c
 - **Fix** — click a spelling chip for any name in the sentence (or "Ask Claude" for other words) → *Generate new take* → *Keep new*. Tick *Save to library* so future sets get it right.
 - **Edit** — rewrite the sentence; name spellings and number readings are re-applied automatically.
 - **Delete** — removes a sentence (Undo for 10 s).
-- **Approve & download** — downloads the WAV and marks the script approved. Approved scripts don't regenerate audio when opened; use *Reopen* or *Download again*.
+- **Approve & download** — downloads the WAV and marks the script approved (its audio is stored for later patches). Approved scripts don't regenerate audio when opened.
+- **Patch an approved script** (e.g. client feedback, shown in an amber box with suggested fixes):
+  1. Open it — the approved audio loads from storage. Older scripts: drop in the WAV that was downloaded for it (it stays in your browser; the tool refuses a file whose pauses don't match the script).
+  2. *Use suggestion* (or Fix / Edit any sentence) → *Generate new take* → *Keep new*. Only that sentence changes.
+  3. **Download patched (v2)**. Tick *Keep original length* if the video team needs the file exactly as long as before (pauses give or take, then a ≤ 6% time-stretch); otherwise the new take keeps its natural length and the toast says by how much the file changed.
 
 ---
 
@@ -103,9 +110,9 @@ Production env vars (Vercel → Settings → Environment Variables): `ELEVEN_LAB
 
 | Path | What |
 |---|---|
-| `src/app/review/` | Review tool UI: `ReviewApp.tsx` (screen), `FixPanel.tsx` (fix/edit), `audio.ts` (generation, cache, joining, pauses), `actions.ts` (server actions), `api/tts/route.ts` (ElevenLabs proxy) |
+| `src/app/review/` | Review tool UI: `ReviewApp.tsx` (screen), `FixPanel.tsx` (fix/edit), `audio.ts` (generation, cache, joining, pauses), `actions.ts` (server actions), `api/tts/route.ts` (ElevenLabs proxy), `api/clips/route.ts` (stored approved clips) |
 | `src/lib/review/` | Server helpers (Supabase, passcode) and shared types |
-| `review-tool/cli/` | Offline tooling: `prepare-set.mjs`, `library.mjs`, `changes.mjs` |
+| `review-tool/cli/` | Offline tooling: `prepare-set.mjs`, `library.mjs`, `changes.mjs`, `import-feedback.mjs` (client comments), `audio.mjs` (stored-audio usage / purge) |
 | `review-tool/sets/` | One spec per set (`<slug>.json`) + exactly what was uploaded (`<slug>.prepared.json`) |
 | `review-tool/schema.sql` | Supabase schema (sets, scripts, pronunciation_library, sentence_changes) |
 | `c8-scripts/` | Source CSVs — **student data, git-ignored** (the repo is public). Get them from the team; not in a fresh clone |

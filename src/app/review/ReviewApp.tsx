@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { AlertCircle, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDot, Download, Loader2, Pause, Pencil, Play, RotateCcw, Trash2, Type, Undo2 } from "lucide-react";
+import { AlertCircle, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, CircleDot, Download, FileAudio, Loader2, MessageSquare, Pause, Pencil, Play, RotateCcw, Trash2, Type, Undo2, Wand2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ChangeLogEntry, LibraryEntry, ReviewScript, ReviewSet, ScriptStatus, Sentence } from "@/lib/review/types";
-import { logChanges, markInReview, saveLibraryEntry, saveSentences, setScriptStatus } from "./actions";
-import { AuthError, isLoaded, loadScriptAudio, requestsFor, type ScriptAudio } from "./audio";
+import { logChanges, markInReview, saveLibraryEntry, savePatch, saveSentences, setScriptStatus, setStoredClips } from "./actions";
+import { audioFromDelivered, AuthError, fitToOriginal, isLoaded, loadScriptAudio, loadStoredAudio, parseWav, requestsFor, storeClips, withFreshUrl, type ScriptAudio } from "./audio";
 import FixPanel, { type TakeInfo } from "./FixPanel";
 
 const SPEEDS = [1, 1.25, 1.5];
@@ -26,11 +26,40 @@ function StatusBadge({ status }: { status: ScriptStatus }) {
     return <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${s.className}`}>{s.label}</span>;
 }
 
-// e.g. "C8-R1-Set1_MUSB-C8-71478_Utkarsh-Verma.wav"
-function downloadName(set: ReviewSet | undefined, script: ReviewScript): string {
+// open = client feedback still to patch; no_regen = QC'd, not fixing; done = patched since the import
+function feedbackState(script: ReviewScript): "open" | "no_regen" | "done" | null {
+    const f = script.feedback;
+    if (!f) return null;
+    if (f.no_regen) return "no_regen";
+    return (script.patches ?? []).some(p => p.at > f.imported_at) ? "done" : "open";
+}
+
+function ScriptTags({ script }: { script: ReviewScript }) {
+    const feedback = feedbackState(script);
+    const patches = script.patches?.length ?? 0;
+    return (
+        <>
+            {feedback === "open" && <span className="text-[11px] px-2 py-0.5 rounded-full border bg-amber-500/10 text-amber-300 border-amber-500/30">Client feedback</span>}
+            {feedback === "no_regen" && <span className="text-[11px] px-2 py-0.5 rounded-full border bg-slate-800 text-slate-400 border-slate-700">Feedback · no regen</span>}
+            {patches > 0 && <span className="text-[11px] px-2 py-0.5 rounded-full border bg-indigo-500/10 text-indigo-300 border-indigo-500/30">Patched v{patches + 1}</span>}
+        </>
+    );
+}
+
+// e.g. "C8-R1-Set1_MUSB-C8-71478_Utkarsh-Verma.wav", patched: "…_Utkarsh-Verma_v2.wav"
+function downloadName(set: ReviewSet | undefined, script: ReviewScript, version?: number): string {
     const slug = (s: string) => s.normalize("NFKD").replace(/[^\w]+/g, "-").replace(/^-+|-+$/g, "");
     const name = script.student_name.split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-    return `${[set?.file_prefix, script.application_number, name].filter(Boolean).map(p => slug(p!)).join("_")}.wav`;
+    return `${[set?.file_prefix, script.application_number, name].filter(Boolean).map(p => slug(p!)).join("_")}${version ? `_v${version}` : ""}.wav`;
+}
+
+// Patching an approved (delivered) script: fixes replace single sentences in `base`, the audio the
+// client has. Nothing is saved until the patched WAV is downloaded.
+interface PatchState {
+    scriptId: string;
+    base: ScriptAudio;
+    sentences: Sentence[];
+    changed: number[]; // sentence indexes replaced since `base`
 }
 
 function saveFile(url: string, filename: string) {
@@ -90,10 +119,17 @@ export default function ReviewApp({
     const [activeScriptId, setActiveScriptId] = useState(initialScript?.id);
     const [statuses, setStatuses] = useState<Record<string, ScriptStatus>>(() => Object.fromEntries(scripts.map(s => [s.id, s.status])));
     const [ready, setReady] = useState<Set<string>>(() => new Set());
-    const [edits, setEdits] = useState<Record<string, Sentence[]>>({}); // fixes saved this session
+    const [overrides, setOverrides] = useState<Record<string, Partial<ReviewScript>>>({}); // changes saved this session
     const [library, setLibrary] = useState(initialLibrary);
     const [fixIndex, setFixIndex] = useState<number | null>(null);
     const [fixMode, setFixMode] = useState<"fix" | "edit">("fix");
+    const [fixPrefill, setFixPrefill] = useState<{ original: string; spoken: string } | null>(null);
+    const [patch, setPatch] = useState<PatchState | null>(null);
+    const [keepLength, setKeepLength] = useState(false);
+    const [patchBusy, setPatchBusy] = useState(false);
+    const [storedFailed, setStoredFailed] = useState<Set<string>>(() => new Set());
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    const patchUrls = useRef<string[]>([]); // blob URLs made for patching (not in the audio LRU) — freed on leave
     const [audioUnlocked, setAudioUnlocked] = useState<string | null>(null); // approved script allowed to load audio
     const pendingDownloadRef = useRef<string | null>(null);
     const reviewer = useSyncExternalStore(subscribeReviewer, readReviewer, () => null); // null until hydrated
@@ -114,11 +150,20 @@ export default function ReviewApp({
     const resumeAtRef = useRef<number | null>(null); // sentence to seek to once rebuilt audio loads
 
     const allScripts = useMemo(
-        () => scripts.map(s => (edits[s.id] ? { ...s, sentences: edits[s.id] } : s)),
-        [scripts, edits]
+        () => scripts.map(s => (overrides[s.id] ? { ...s, ...overrides[s.id] } : s)),
+        [scripts, overrides]
     );
     const setScripts = useMemo(() => allScripts.filter(s => s.set_id === activeSetId), [allScripts, activeSetId]);
     const activeScript = allScripts.find(s => s.id === activeScriptId);
+    const override = (id: string, values: Partial<ReviewScript>) =>
+        setOverrides(prev => ({ ...prev, [id]: { ...prev[id], ...values } }));
+
+    const approved = !!activeScript && statuses[activeScript.id] === "approved";
+    const patching = approved && !!audio && patch?.scriptId === activeScript?.id;
+    const unsavedPatch = patching && patch!.changed.length > 0;
+    const shownSentences = (patching ? patch!.sentences : activeScript?.sentences) ?? [];
+    const storedLoading = approved && !audio && !!activeScript?.stored_clips?.length
+        && !storedFailed.has(activeScript.id) && audioUnlocked !== activeScript.id;
 
     const currentIdx = useMemo(() => {
         if (!audio) return null;
@@ -152,6 +197,9 @@ export default function ReviewApp({
                 if (cancelled) return;
                 setAudio(result);
                 setReady(prev => new Set(prev).add(activeScript.id));
+                if (statuses[activeScript.id] === "approved") {
+                    setPatch({ scriptId: activeScript.id, base: result, sentences: activeScript.sentences, changed: [] });
+                }
                 if (pendingDownloadRef.current === activeScript.id) {
                     pendingDownloadRef.current = null;
                     saveFile(result.url, downloadName(sets.find(s => s.id === activeScript.set_id), activeScript));
@@ -175,6 +223,39 @@ export default function ReviewApp({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeScript, shouldLoad, retryKey, allScripts, handleAuthError]);
 
+    // Approved scripts with stored clips load the approved audio straight from storage (no generation).
+    const activeId = activeScript?.id;
+    const hasAudio = audio !== null;
+    useEffect(() => {
+        if (!activeScript || !storedLoading) return;
+        let cancelled = false;
+        setProgress(null);
+        loadStoredAudio(activeScript, (done, total) => { if (!cancelled) setProgress({ done, total }); })
+            .then(result => {
+                if (cancelled) return URL.revokeObjectURL(result.url);
+                patchUrls.current.push(result.url);
+                setAudio(result);
+                setPatch({ scriptId: activeScript.id, base: result, sentences: activeScript.sentences, changed: [] });
+            })
+            .catch(err => {
+                if (cancelled) return;
+                if (err instanceof AuthError) return handleAuthError();
+                setStoredFailed(prev => new Set(prev).add(activeScript.id));
+                setUploadError(`Couldn't load the stored audio (${err instanceof Error ? err.message : "error"}) — upload the approved WAV instead.`);
+            });
+        return () => { cancelled = true; };
+        // Keyed on the script, not its object identity, so saving a patch doesn't reload it.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeId, storedLoading, hasAudio, handleAuthError]);
+
+    // An unsaved patch exists only in this tab.
+    useEffect(() => {
+        if (!unsavedPatch) return;
+        const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+        window.addEventListener("beforeunload", warn);
+        return () => window.removeEventListener("beforeunload", warn);
+    }, [unsavedPatch]);
+
     // Smooth highlight while playing.
     useEffect(() => {
         if (!playing) return;
@@ -191,8 +272,20 @@ export default function ReviewApp({
         if (playing && currentIdx !== null) sentenceRefs.current[currentIdx]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }, [currentIdx, playing]);
 
+    const confirmLeavePatch = () =>
+        !unsavedPatch || window.confirm("Discard the patch? The patched WAV hasn't been downloaded, so nothing was saved.");
+
+    const leavePatch = () => {
+        patchUrls.current.forEach(url => URL.revokeObjectURL(url));
+        patchUrls.current = [];
+        setPatch(null);
+        setUploadError(null);
+        setFixPrefill(null);
+    };
+
     const openScript = (script: ReviewScript) => {
-        if (script.id === activeScriptId) return;
+        if (script.id === activeScriptId || !confirmLeavePatch()) return;
+        leavePatch();
         audioRef.current?.pause();
         setActiveScriptId(script.id);
         setFixIndex(null);
@@ -210,7 +303,8 @@ export default function ReviewApp({
     };
 
     const openSet = (setId: string) => {
-        if (setId === activeSetId) return;
+        if (setId === activeSetId || !confirmLeavePatch()) return;
+        leavePatch();
         audioRef.current?.pause();
         setActiveSetId(setId);
         setActiveScriptId(undefined);
@@ -248,10 +342,11 @@ export default function ReviewApp({
         if (audioRef.current) audioRef.current.playbackRate = r;
     };
 
-    const openFix = useCallback((i: number, mode: "fix" | "edit" = "fix") => {
+    const openFix = useCallback((i: number, mode: "fix" | "edit" = "fix", prefill: { original: string; spoken: string } | null = null) => {
         audioRef.current?.pause();
         setFixIndex(i);
         setFixMode(mode);
+        setFixPrefill(prefill);
     }, []);
 
     // Saves a script's new sentence list. The audio effect then rebuilds it from cache — only a
@@ -268,7 +363,7 @@ export default function ReviewApp({
             return false;
         }
         resumeAtRef.current = opts.resumeAt;
-        setEdits(prev => ({ ...prev, [script.id]: sentences }));
+        override(script.id, { sentences });
         setFixIndex(null);
         const undo = opts.undo;
         toast.success(opts.message, undo && {
@@ -320,14 +415,28 @@ export default function ReviewApp({
         }]);
     };
 
-    const keepFix = async (sentences: Sentence[], entry: LibraryEntry | null, take: TakeInfo) => {
+    const keepFix = async (sentences: Sentence[], entry: LibraryEntry | null, take: TakeInfo, preview: ScriptAudio) => {
         if (!activeScript || fixIndex === null) return;
         const message = fixMode === "edit" ? "Sentence updated" : "Fix saved";
         const index = fixIndex;
-        const saved = await commitSentences(activeScript, sentences, {
-            message: entry ? `${message} · “${entry.term}” added to library` : message,
-            resumeAt: Math.max(0, index - 1),
-        });
+        let saved: boolean;
+        if (patching && patch) {
+            // Patch: replace just this sentence in the delivered audio; saved when the patched WAV is downloaded.
+            const next = withFreshUrl(preview); // the panel frees its preview URL when it closes
+            patchUrls.current.push(next.url);
+            resumeAtRef.current = Math.max(0, index - 1);
+            setAudio(next);
+            setPatch({ ...patch, sentences, changed: [...new Set([...patch.changed, index])].sort((a, b) => a - b) });
+            setFixIndex(null);
+            setFixPrefill(null);
+            toast.success(`Sentence ${index + 1} replaced — download the patched WAV to save it`);
+            saved = true;
+        } else {
+            saved = await commitSentences(activeScript, sentences, {
+                message: entry ? `${message} · “${entry.term}” added to library` : message,
+                resumeAt: Math.max(0, index - 1),
+            });
+        }
         if (saved) {
             logChange(activeScript, [{
                 action: fixMode,
@@ -401,12 +510,24 @@ export default function ReviewApp({
     const approve = async () => {
         if (!activeScript || !audio) return;
         const script = activeScript;
+        const approvedAudio = audio;
         saveFile(audio.url, downloadName(sets.find(s => s.id === script.set_id), script));
         setStatusBusy(true);
         try {
             await setScriptStatus(script.id, "approved");
             setStatuses(prev => ({ ...prev, [script.id]: "approved" }));
+            setPatch({ scriptId: script.id, base: approvedAudio, sentences: script.sentences, changed: [] });
             toast.success(`${script.student_name} approved and downloaded`);
+            // Keep the exact clips, so a later fix regenerates only the changed sentence.
+            storeClips(script.id, script.sentences, approvedAudio.clips, script.stored_clips ?? [])
+                .then(async keys => {
+                    await setStoredClips(script.id, keys);
+                    override(script.id, { stored_clips: keys });
+                })
+                .catch(err => {
+                    if (err instanceof AuthError) return handleAuthError();
+                    toast.warning("Approved and downloaded, but the audio couldn't be stored — patching this script later will need the downloaded WAV.");
+                });
         } catch {
             toast.error("Downloaded, but couldn't mark the script approved — try again.");
         } finally {
@@ -415,8 +536,10 @@ export default function ReviewApp({
     };
 
     const reopen = async () => {
-        if (!activeScript) return;
+        if (!activeScript || !confirmLeavePatch()) return;
         const id = activeScript.id;
+        setPatch(null);
+        setFixPrefill(null);
         setStatusBusy(true);
         try {
             await setScriptStatus(id, "in_review");
@@ -426,6 +549,83 @@ export default function ReviewApp({
             toast.error("Couldn't reopen the script.");
         } finally {
             setStatusBusy(false);
+        }
+    };
+
+    // Delivered WAV → sentences, without generating anything.
+    const uploadDelivered = async (file: File) => {
+        if (!activeScript) return;
+        setUploadError(null);
+        if (!file.name.includes(activeScript.application_number)
+            && !window.confirm(`“${file.name}” doesn't mention ${activeScript.application_number}. Use it for ${activeScript.student_name} anyway?`)) {
+            return;
+        }
+        try {
+            const result = audioFromDelivered(parseWav(await file.arrayBuffer()), activeScript.sentences);
+            patchUrls.current.push(result.url);
+            autoplayRef.current = false;
+            setAudio(result);
+            setPatch({ scriptId: activeScript.id, base: result, sentences: activeScript.sentences, changed: [] });
+            toast.success("Approved audio loaded — fix any sentence; only that sentence is regenerated.");
+        } catch (err) {
+            setUploadError(err instanceof Error ? err.message : "Couldn't read that file.");
+        }
+    };
+
+    const discardPatch = () => {
+        if (!patch || !window.confirm("Discard the replaced sentences and go back to the delivered audio?")) return;
+        audioRef.current?.pause();
+        setFixIndex(null);
+        setAudio(patch.base);
+        setPatch({ ...patch, sentences: activeScript?.sentences ?? patch.sentences, changed: [] });
+    };
+
+    // Downloads <name>_vN.wav and saves the patch; the script stays approved.
+    const downloadPatched = async () => {
+        if (!activeScript || !audio || !patch || !patch.changed.length) return;
+        const script = activeScript, current = audio, p = patch;
+        let out = current;
+        if (keepLength) {
+            const fitted = fitToOriginal(p.base, current, p.changed);
+            if ("error" in fitted) {
+                toast.error(fitted.error);
+                return;
+            }
+            out = fitted.audio;
+            patchUrls.current.push(out.url);
+        }
+        const file = downloadName(sets.find(s => s.id === script.set_id), script, (script.patches?.length ?? 0) + 2);
+        saveFile(out.url, file);
+        setPatchBusy(true);
+        try {
+            // Stored-clip scripts get the new clips stored too; for an uploaded WAV only the text is saved.
+            let stored: string[] | null = null;
+            if (current.clips.every(c => c !== null)) {
+                stored = await storeClips(script.id, p.sentences, current.clips, script.stored_clips ?? [])
+                    .catch(err => {
+                        if (err instanceof AuthError) throw err;
+                        toast.warning("Patched audio couldn't be stored — patching again later will need this WAV.");
+                        return null;
+                    });
+            }
+            const patches = await savePatch(script.id, p.sentences, {
+                sentences: p.changed,
+                length: keepLength ? "original" : "natural",
+                source: p.base.source,
+                file,
+                by: reviewer || "unknown",
+            }, stored);
+            override(script.id, { sentences: p.sentences, patches, ...(stored ? { stored_clips: stored } : {}) });
+            setAudioUnlocked(null); // keep this audio; don't rebuild it from the saved text
+            setPatch({ scriptId: script.id, base: current, sentences: p.sentences, changed: [] });
+            const changedSentences = p.changed.map(i => i + 1).join(", ");
+            const delta = out.duration - p.base.duration;
+            toast.success(`Saved ${file} · sentence${p.changed.length > 1 ? "s" : ""} ${changedSentences} replaced · ${Math.abs(delta) < 0.005 ? "same length" : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)} s`}`);
+        } catch (err) {
+            if (err instanceof AuthError) handleAuthError();
+            else toast.error("Downloaded, but the patch couldn't be saved — download it again before leaving.");
+        } finally {
+            setPatchBusy(false);
         }
     };
 
@@ -493,6 +693,9 @@ export default function ReviewApp({
                                             <span className="font-medium truncate">{script.student_name}</span>
                                             <StatusBadge status={statuses[script.id]} />
                                         </div>
+                                        {(script.feedback || (script.patches?.length ?? 0) > 0) && (
+                                            <div className="flex flex-wrap justify-end gap-1 mt-1"><ScriptTags script={script} /></div>
+                                        )}
                                         <div className="flex items-center justify-between text-xs text-slate-500 mt-0.5">
                                             <span>{script.application_number}</span>
                                             {ready.has(script.id) && !active && (
@@ -516,17 +719,42 @@ export default function ReviewApp({
                             <div className="flex flex-wrap items-center gap-3 mb-5">
                                 <h2 className="text-2xl font-semibold">{activeScript.student_name}</h2>
                                 <StatusBadge status={statuses[activeScript.id]} />
+                                <ScriptTags script={activeScript} />
                                 <span className="text-sm text-slate-500">{activeScript.application_number}</span>
                                 <div className="flex flex-wrap items-center gap-2 ml-auto">
-                                    {statuses[activeScript.id] === "approved" ? (
+                                    {statuses[activeScript.id] === "approved" && unsavedPatch ? (
+                                        <>
+                                            <label
+                                                className="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer"
+                                                title="The pauses around the new sentences give or take, then the new take is time-stretched (at most 6%), so the file is exactly as long as the delivered one and nothing after the patch moves."
+                                            >
+                                                <input type="checkbox" checked={keepLength} onChange={e => setKeepLength(e.target.checked)} className="accent-indigo-500" />
+                                                Keep original length
+                                            </label>
+                                            <Button size="sm" variant="ghost" disabled={patchBusy} onClick={discardPatch} className="text-slate-400">
+                                                <X />Discard
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                disabled={patchBusy || fixIndex !== null}
+                                                onClick={downloadPatched}
+                                                title={fixIndex !== null ? "Close the open panel first" : undefined}
+                                                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                                            >
+                                                {patchBusy ? <Loader2 className="animate-spin" /> : <Download />}Download patched (v{(activeScript.patches?.length ?? 0) + 2})
+                                            </Button>
+                                        </>
+                                    ) : statuses[activeScript.id] === "approved" ? (
                                         <>
                                             <Button
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={!audio && shouldLoad && !error}
+                                                disabled={(!audio && shouldLoad && !error) || storedLoading}
+                                                title={audio ? undefined : "Regenerates every sentence (uses ElevenLabs credits)"}
                                                 onClick={() => {
                                                     if (audio) {
-                                                        saveFile(audio.url, downloadName(sets.find(s => s.id === activeScript.set_id), activeScript));
+                                                        const version = activeScript.patches?.length ? activeScript.patches.length + 1 : undefined;
+                                                        saveFile(audio.url, downloadName(sets.find(s => s.id === activeScript.set_id), activeScript, version));
                                                     } else {
                                                         pendingDownloadRef.current = activeScript.id;
                                                         setAudioUnlocked(activeScript.id);
@@ -558,6 +786,59 @@ export default function ReviewApp({
                                 </div>
                             </div>
 
+                            {activeScript.feedback && (() => {
+                                const f = activeScript.feedback;
+                                const state = feedbackState(activeScript);
+                                const suggestions = f.suggestions.filter(sg => sg.index < shownSentences.length);
+                                const replaced = (i: number) => (patching && patch!.changed.includes(i))
+                                    || (activeScript.patches ?? []).some(p => p.at > f.imported_at && p.sentences.includes(i));
+                                return (
+                                    <div className={`mb-5 rounded-xl border p-4 text-sm ${state === "open" ? "border-amber-500/30 bg-amber-500/5" : "border-slate-800 bg-slate-900/60"}`}>
+                                        <div className="flex items-start gap-2.5">
+                                            <MessageSquare className={`w-4 h-4 mt-0.5 shrink-0 ${state === "open" ? "text-amber-300" : "text-slate-500"}`} />
+                                            <div className="min-w-0 flex-1 space-y-2">
+                                                <p className="text-slate-200 whitespace-pre-line">{f.comment}</p>
+                                                <p className="text-xs text-slate-500">
+                                                    Client feedback · {f.source}
+                                                    {f.no_regen ? " · QC'd: no regen — leave as is" : state === "done" ? " · patched" : ""}
+                                                </p>
+                                                {!f.no_regen && suggestions.map(sg => {
+                                                    const current = shownSentences[sg.index];
+                                                    const wordingChanges = sg.original !== current.original;
+                                                    return (
+                                                        <div key={sg.index} className="flex items-start gap-3 rounded-lg bg-slate-950/50 border border-slate-800 px-3 py-2">
+                                                            <span className="text-xs tabular-nums text-slate-500 pt-0.5 w-8 shrink-0">#{sg.index + 1}</span>
+                                                            <div className="min-w-0 flex-1 space-y-1">
+                                                                {wordingChanges && <p className="text-slate-300">{sg.original}</p>}
+                                                                <p className="text-xs text-slate-500"><span className="uppercase tracking-wide mr-1.5">Send as</span>{sg.spoken}</p>
+                                                                {sg.note && <p className="text-xs text-amber-200/80">{sg.note}</p>}
+                                                            </div>
+                                                            {replaced(sg.index) ? (
+                                                                <span className="text-xs text-emerald-400 flex items-center gap-1 shrink-0 pt-0.5"><Check className="w-3.5 h-3.5" />Replaced</span>
+                                                            ) : (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    disabled={!audio}
+                                                                    title={audio ? undefined : "Load the approved audio first"}
+                                                                    onClick={() => {
+                                                                        openFix(sg.index, wordingChanges ? "edit" : "fix", { original: sg.original, spoken: sg.spoken });
+                                                                        sentenceRefs.current[sg.index]?.scrollIntoView({ block: "center", behavior: "smooth" });
+                                                                    }}
+                                                                    className="shrink-0"
+                                                                >
+                                                                    <Wand2 />Use suggestion
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
                             {/* Player */}
                             <div className="sticky top-3 z-10 bg-slate-900/95 backdrop-blur border border-slate-800 rounded-2xl p-4 mb-6">
                                 {error ? (
@@ -566,16 +847,55 @@ export default function ReviewApp({
                                         <span className="flex-1">{error}</span>
                                         <Button size="sm" variant="outline" onClick={retry}><RotateCcw className="w-4 h-4" />Retry</Button>
                                     </div>
+                                ) : !audio && storedLoading ? (
+                                    <div className="space-y-2">
+                                        <div className="flex items-center gap-2 text-sm text-slate-400">
+                                            <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                                            Loading the approved audio… {progress ? `${progress.done}/${progress.total} sentences` : ""}
+                                        </div>
+                                        <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                            <div className="h-full bg-emerald-500 transition-all" style={{ width: `${progress ? (100 * progress.done) / progress.total : 0}%` }} />
+                                        </div>
+                                    </div>
                                 ) : !audio && !shouldLoad ? (
-                                    <div className="flex flex-wrap items-center gap-3 text-sm">
-                                        <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-                                        <span className="flex-1 text-slate-300">
-                                            Approved — audio isn&apos;t generated for approved scripts. Reopen to review it again,
-                                            or use <span className="text-slate-100">Download again</span> to re-create the file.
-                                        </span>
-                                        <Button size="sm" variant="outline" disabled={statusBusy} onClick={reopen}>
-                                            <Undo2 />Reopen
-                                        </Button>
+                                    <div className="space-y-3 text-sm">
+                                        <div className="flex items-start gap-3">
+                                            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                                            <p className="flex-1 text-slate-300">
+                                                Approved. To listen or patch it without regenerating, upload the WAV that was downloaded
+                                                for this script — a fix then replaces only that sentence.
+                                            </p>
+                                        </div>
+                                        <label
+                                            onDragOver={e => e.preventDefault()}
+                                            onDrop={e => {
+                                                e.preventDefault();
+                                                const file = e.dataTransfer.files[0];
+                                                if (file) void uploadDelivered(file);
+                                            }}
+                                            className="flex flex-wrap items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 hover:border-indigo-400 hover:bg-indigo-500/5 px-4 py-5 cursor-pointer text-slate-300"
+                                        >
+                                            <FileAudio className="w-5 h-5 text-indigo-300" />
+                                            Drop the approved WAV here or <span className="text-indigo-300">choose a file</span>
+                                            <input
+                                                type="file"
+                                                accept=".wav,audio/wav,audio/x-wav"
+                                                className="hidden"
+                                                onChange={e => {
+                                                    const file = e.target.files?.[0];
+                                                    e.target.value = "";
+                                                    if (file) void uploadDelivered(file);
+                                                }}
+                                            />
+                                        </label>
+                                        {uploadError && (
+                                            <p className="flex items-start gap-2 text-red-400"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{uploadError}</p>
+                                        )}
+                                        <p className="text-xs text-slate-500">
+                                            The file stays in this browser. No WAV? <span className="text-slate-300">Download again</span> regenerates
+                                            every sentence (uses credits), or{" "}
+                                            <button onClick={reopen} disabled={statusBusy} className="text-indigo-400 hover:text-indigo-300">reopen</button> to review from scratch.
+                                        </p>
                                     </div>
                                 ) : !audio ? (
                                     <div className="space-y-2">
@@ -629,11 +949,21 @@ export default function ReviewApp({
                                 )}
                             </div>
 
+                            {patching && (
+                                <p className="text-xs text-slate-500 -mt-3 mb-5">
+                                    Patch mode · playing {audio!.source === "upload" ? "the WAV you uploaded" : audio!.source === "stored" ? "the stored approved audio" : "regenerated audio"}.
+                                    {" "}Fix or edit a sentence to replace just that sentence — the script stays approved.
+                                    {unsavedPatch && <span className="text-emerald-400"> {patch!.changed.length} replaced — download the patched WAV to save.</span>}
+                                </p>
+                            )}
+
                             {/* Sentences */}
                             <ol className="space-y-1">
-                                {activeScript.sentences.map((sentence, i) => {
+                                {shownSentences.map((sentence, i) => {
                                     const current = audio !== null && currentIdx === i;
-                                    const newParagraph = i > 0 && sentence.paragraph !== activeScript.sentences[i - 1].paragraph;
+                                    const newParagraph = i > 0 && sentence.paragraph !== shownSentences[i - 1].paragraph;
+                                    const replaced = patching && patch!.changed.includes(i);
+                                    const flagged = feedbackState(activeScript) === "open" && activeScript.feedback!.suggestions.some(sg => sg.index === i);
                                     return (
                                         <li key={i} className={newParagraph ? "pt-4" : ""}>
                                             <div className={`group flex items-start rounded-xl border-l-2 transition-colors ${current ? "bg-indigo-500/10 border-indigo-400" : "border-transparent hover:bg-slate-900"}`}>
@@ -644,9 +974,12 @@ export default function ReviewApp({
                                                     className="flex-1 min-w-0 text-left px-4 py-3 disabled:cursor-default"
                                                 >
                                                     <div className="flex gap-3">
-                                                        <span className={`text-xs tabular-nums pt-1 w-5 shrink-0 ${current ? "text-indigo-300" : "text-slate-600"}`}>{i + 1}</span>
+                                                        <span className={`text-xs tabular-nums pt-1 w-5 shrink-0 ${current ? "text-indigo-300" : flagged ? "text-amber-300" : "text-slate-600"}`}>{i + 1}</span>
                                                         <div className="min-w-0">
-                                                            <p className={`leading-relaxed ${current ? "text-white" : "text-slate-300"}`}>{sentence.original}</p>
+                                                            <p className={`leading-relaxed ${current ? "text-white" : "text-slate-300"}`}>
+                                                                {sentence.original}
+                                                                {replaced && <span className="ml-2 text-[10px] uppercase tracking-wide text-emerald-400">replaced</span>}
+                                                            </p>
                                                             {sentence.spoken !== sentence.original && (
                                                                 <p className="text-xs text-slate-500 mt-1">
                                                                     <span className="uppercase tracking-wide mr-1.5">Sent as</span>{sentence.spoken}
@@ -680,10 +1013,10 @@ export default function ReviewApp({
                                                     <Button
                                                         size="icon-sm"
                                                         variant="ghost"
-                                                        disabled={!audio || activeScript.sentences.length <= 1}
+                                                        disabled={!audio || patching || shownSentences.length <= 1}
                                                         onClick={() => deleteSentence(i)}
                                                         className="text-slate-400 hover:text-red-400"
-                                                        title="Delete sentence"
+                                                        title={patching ? "Deleting isn't available when patching delivered audio" : "Delete sentence"}
                                                         aria-label="Delete sentence"
                                                     >
                                                         <Trash2 />
@@ -692,16 +1025,17 @@ export default function ReviewApp({
                                             </div>
                                             {fixIndex === i && audio && (
                                                 <FixPanel
-                                                    key={`${activeScript.id}-${i}-${fixMode}`}
+                                                    key={`${activeScript.id}-${i}-${fixMode}-${fixPrefill?.spoken ?? ""}`}
                                                     mode={fixMode}
-                                                    script={activeScript}
+                                                    script={patching ? { ...activeScript, sentences: shownSentences } : activeScript}
                                                     index={i}
                                                     audio={audio}
                                                     library={library}
+                                                    initial={fixPrefill}
                                                     pauseMain={() => audioRef.current?.pause()}
                                                     onTake={logTake}
                                                     onKeep={keepFix}
-                                                    onClose={() => setFixIndex(null)}
+                                                    onClose={() => { setFixIndex(null); setFixPrefill(null); }}
                                                     onAuthError={handleAuthError}
                                                 />
                                             )}

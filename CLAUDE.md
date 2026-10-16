@@ -1,11 +1,11 @@
 # Agent handoff — MU founder-message audio
 
-You are maintaining the **Script Review** tool (`/review`): personalised Masters' Union welcome messages, voiced by ElevenLabs, reviewed by 2–3 people who fix mispronounced Indian names and download a WAV per student. The human overview is in [README.md](README.md). This file is what you need to **run the process** — most often: *"New set: `c8-scripts/<file>.csv`"*.
+You are maintaining the **Script Review** tool (`/review`): personalised Masters' Union welcome messages, voiced by ElevenLabs, reviewed by 2–3 people who fix mispronounced Indian names and download a WAV per student. The human overview is in [README.md](README.md). This file is what you need to **run the process** — most often: *"New set: `c8-scripts/<file>.csv`"*, sometimes *"Client feedback: `c8-scripts/Comments-added/<file>.csv`"*.
 
 ## Hard rules
 
 1. **Never test automatically.** Don't start the dev server, drive a browser against the app, or call ElevenLabs/Claude to "check" things — they cost credits. Finish every change with **manual test steps** for the user. (Static checks are fine: `npx tsc --noEmit -p .`, `npx eslint src/app/review src/lib/review`, `npm run build`, and running the `review-tool/cli` scripts, which only read/write Supabase.)
-2. **Ask before anything outward-facing:** deploying, uploading a set that replaces another, changing Vercel env vars, running SQL in Supabase. Uploading a *new* set is the expected outcome of "New set: …" and doesn't need extra confirmation.
+2. **Ask before anything outward-facing:** deploying, uploading a set that replaces another, changing Vercel env vars, running SQL in Supabase, purging stored audio. Uploading a *new* set is the expected outcome of "New set: …" and importing feedback the expected outcome of "Client feedback: …" — neither needs extra confirmation.
 3. **Don't touch the legacy tool** (`src/app/page.tsx`, `src/actions/*`, `/scrub`, `/stitch-test`) unless asked.
 4. **Never print or commit secrets.** Values live in `.env.local` (git-ignored). Read them in scripts; don't echo them.
 5. **Record schema changes** in `review-tool/schema.sql` (as a dated migration block) whenever you run SQL in Supabase.
@@ -56,6 +56,20 @@ Input: a CSV in `c8-scripts/` with columns `Application Number`, `Name`, `Founde
 
 6. **Report to the user:** script count, which names went to Devanagari, which stayed English, rules applied (with any new learned rule), anything you were unsure about (ambiguous name pronunciations — e.g. Shristi vs Srishti), and the URL. **No redeploy is needed** for a new set — `/review` reads Supabase on load.
 
+## Client feedback on a delivered set — the procedure
+
+Input: the set's CSV with a `comment` column (client QC on the videos) and "No regen" written in another column for comments the user decided not to fix. Respect "No regen" — never suggest fixes for those.
+
+1. **Read every comment and the script it's about** (`python3` + `csv.DictReader`, `utf-8-sig`). Compare the sheet's `Founder Message` with what was voiced — clients sometimes edit the wording *after* delivery (Set 2: `Delhi Public School` → `DPS`); the import preview prints these as `✎ client's sheet now says`.
+2. **Write the spec** `review-tool/feedback/<slug>.json` (copy `c8-r1-set-2.json`; the folder is git-ignored — it names students' application numbers): per application number, the 1-based sentence(s) to redo with an optional new `original` wording and a `note` for the reviewer. Spoken text is computed with today's rules (keep the name spellings the sentence already uses); put round-specific spellings in `spellings`.
+3. **Preview, then import:**
+   ```bash
+   node review-tool/cli/import-feedback.mjs review-tool/feedback/<slug>.json            # shows now → send for each sentence
+   node review-tool/cli/import-feedback.mjs review-tool/feedback/<slug>.json --upload   # attaches it in /review; statuses untouched
+   ```
+4. **Report:** per comment — what's wrong, root cause, the suggested text, and that the **video needs that sentence redone** (lip-sync / re-render is outside this repo). Reviewers then open the script: an approved script loads its stored clips (or they drop in the delivered WAV), *Use suggestion* → generate → keep → **Download patched (vN)**. Only the flagged sentences are regenerated; the script stays approved and gets a *Patched* tag.
+5. Add what you learned to **Learned rules** below.
+
 ## Pronunciation rules (current)
 
 Evidence: `candidate-grid/` (v2: Devanagari 9/9, respellings 5/21) and reviewer changes.
@@ -86,6 +100,7 @@ When unsure, keep the original as `spoken` and put alternatives in `options` —
 - Set 4 → CSV message column was `Corrected Founder Message` (prepare-set accepts either); splitter joins a part that starts lowercase (`family... we can't wait`).
 - Set 4 reviews (Shashwat) → the new number words and Devanagari lead-ins drew **no** edits. 23 of 33 fixes were re-takes; the closing "Welcome to the Masters' Union family — …" line again (5 of 6 had an em dash; a reviewer deleted one by hand; a Set 2 client comment: "video pauses for a second before the welcome line") → **em dashes / ellipses → commas** (new rule). Library: Jai Hind College back to English; Thakor → `Thaa-kor`; Maruti Suzuki → `Maa-ru-ti Su-zu-ki`. Reviewers sometimes glue words (`LawUniversity`) to stop a pause — not generalised.
 - Set 5 → added `₹N lakh/crore`, `Nx` → "times", `Class Nth` → "Class N"; key longer names that contain a first name (`Manav Rachna International School` vs `Manav`).
+- Set 2 client QC on the videos (11 scripts, 7 comments, 2 "No regen") → 3 comments were digits next to Devanagari (`94.6 %` heard as "parent", `97.4 %`, `96.5 %`) — the number-words rule already prevents this. 1 was the em-dash pause. Saad still unclear as `साद` → `साअद`. 3 were the client's own later edits (`DPS`, `BBA`, `IP University`): **acronyms the client writes are read as letters, never expanded**, and confirm the CSV is final before preparing a set. Reviewers had fixed these by hand with respellings (`saaad`, `Anand Nii ke tun`) and glued words (`MatriculationHigher`) — prefer the suggested rule-based text.
 
 ## How the app works (where to change things)
 
@@ -99,12 +114,15 @@ When unsure, keep the original as `spoken` and put alternatives in `options` —
 | Passcode + Supabase client | `src/lib/review/server.ts` |
 | Text rules — names, numbers → words, Devanagari lead-ins (**one file, used by set prep and Edit mode**) | `src/lib/review/spoken-rules.mjs` |
 | Sentence splitting, library merge, upload | `review-tool/cli/prepare-set.mjs` |
+| Patching delivered audio — split an uploaded WAV at its digital-silence pauses, splice one sentence, keep-original-length fit (WSOLA ≤ 6%) | `src/app/review/audio.ts` (`audioFromDelivered`, `spliceSentence`, `fitToOriginal`); UI in `ReviewApp.tsx` |
+| Stored approved clips (private bucket `review-audio`) | `src/app/review/api/clips/route.ts` (GET/PUT through the server), `setStoredClips` / `savePatch` in `actions.ts` |
+| Client feedback import · stored-audio usage/purge | `review-tool/cli/import-feedback.mjs` · `review-tool/cli/audio.mjs` |
 
 Design invariants — keep them:
-- **Text only in Supabase**; audio is generated per sentence on demand and cached in the browser (IndexedDB). Cache keys include the exact text, neighbour context and seed.
+- **Text in the database; audio only as approved clips.** Audio is generated per sentence on demand and cached in the browser (IndexedDB). On approval the exact clips go to the private bucket `review-audio` (`<script_id>/<clip key>.pcm`, key = the cache key: exact text, neighbour context, seed) so a later fix regenerates only the changed sentence. Purge a set's clips when its videos are done.
 - When a sentence changes, its neighbours get `prev_context` / `next_context` frozen to what their audio was generated with, so they're reused unchanged. Preserve this in any new editing feature.
-- Any change to an **approved** script moves it back to `in_review`.
-- Approved scripts don't generate audio on open.
+- A fix to an **approved** script is a **patch**: only that sentence is regenerated and spliced into the delivered audio (stored clips or the uploaded WAV — every other sample stays identical), nothing is saved until *Download patched (vN)*, then the script stays `approved` with a `patches` record. *Reopen* still moves it back to `in_review`.
+- Approved scripts never generate audio on open — they load stored clips, or the reviewer uploads the delivered WAV.
 - Every reviewer action is appended to `sentence_changes` (never updated).
 
 ## Deploying app changes
@@ -120,6 +138,6 @@ The first `vercel deploy` often returns `"status": "error"` with no build error 
 
 ## Data & environment
 
-- Supabase project **mu-script**; tables `sets`, `scripts`, `pronunciation_library`, `sentence_changes` (see `review-tool/schema.sql`). RLS on, no policies — only the server's secret key can access them. Free plan: pauses after 7 days idle.
+- Supabase project **mu-script**; tables `sets`, `scripts`, `pronunciation_library`, `sentence_changes` (see `review-tool/schema.sql`) and the private Storage bucket `review-audio`. RLS on, no policies — only the server's secret key can access them. Free plan: pauses after 7 days idle; **1 GB storage** (≈ 6 MB of clips per approved script) — check with `node review-tool/cli/audio.mjs usage`, and once a set's videos are signed off, purge it (ask first): `node review-tool/cli/audio.mjs purge "<set name>" --yes`.
 - `.env.local` keys: see `.env.example`.
 - `c8-scripts/*.csv` and `review-tool/sets/*.prepared.json` contain student data — **the GitHub repo is public, so they are git-ignored** (also `.vercelignore`d). A fresh clone won't have them: get the CSVs from the user, and treat Supabase as the source of truth for what was uploaded. Never commit or push them.

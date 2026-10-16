@@ -6,7 +6,7 @@ import { BookPlus, Check, Loader2, Play, Sparkles, Square, Wand2, X } from "luci
 import { Button } from "@/components/ui/button";
 import type { LibraryEntry, NounOptions, ReviewScript, Sentence, SpellingOption } from "@/lib/review/types";
 import { suggestSpellings } from "./actions";
-import { AuthError, generateSentence, joinSentences, requestsFor, type ScriptAudio } from "./audio";
+import { AuthError, generateSentence, requestsFor, spliceSentence, type ScriptAudio } from "./audio";
 import { isNumberEntry, toSpoken as applyTextRules } from "@/lib/review/spoken-rules.mjs";
 
 interface Take {
@@ -61,6 +61,7 @@ export default function FixPanel({
     index,
     audio,
     library,
+    initial,
     pauseMain,
     onTake,
     onKeep,
@@ -72,15 +73,16 @@ export default function FixPanel({
     index: number;
     audio: ScriptAudio;
     library: LibraryEntry[];
+    initial?: { original: string; spoken: string } | null; // prefilled text, e.g. a client-feedback suggestion
     pauseMain: () => void;
     onTake: (take: TakeInfo) => void;
-    onKeep: (sentences: Sentence[], libraryEntry: LibraryEntry | null, take: TakeInfo) => Promise<void>;
+    onKeep: (sentences: Sentence[], libraryEntry: LibraryEntry | null, take: TakeInfo, preview: ScriptAudio) => Promise<void>;
     onClose: () => void;
     onAuthError: () => void;
 }) {
     const sentence = script.sentences[index];
-    const [wording, setWording] = useState(sentence.original);
-    const [text, setText] = useState(sentence.spoken);
+    const [wording, setWording] = useState(mode === "edit" ? initial?.original ?? sentence.original : sentence.original);
+    const [text, setText] = useState(initial?.spoken ?? sentence.spoken);
     const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
     const [options, setOptions] = useState<SpellingOption[] | null>(null);
     const [suggesting, setSuggesting] = useState(false);
@@ -210,7 +212,8 @@ export default function FixPanel({
             const seed = Math.floor(Math.random() * 1_000_000_000);
             const sentences = buildCandidate(script.sentences, index, wording.trim(), text.trim(), seed);
             const pcm = await generateSentence(requestsFor(sentences)[index]);
-            const preview = joinSentences(audio.clips.map((c, i) => (i === index ? pcm : c)), sentences);
+            // Only this sentence changes; every other sentence keeps its exact samples.
+            const preview = spliceSentence(audio, index, pcm, sentences);
             const id = crypto.randomUUID();
             setTake({ id, seed, sentences, preview });
             onTake({ takeId: id, seed, before: sentence, after: sentences[index] });
@@ -231,7 +234,7 @@ export default function FixPanel({
             const entry = saveToLibrary && libTerm.trim() && libSpoken.trim()
                 ? { term: libTerm.trim(), spoken: libSpoken.trim() }
                 : null;
-            await onKeep(take.sentences, entry, { takeId: take.id, seed: take.seed, before: sentence, after: take.sentences[index] });
+            await onKeep(take.sentences, entry, { takeId: take.id, seed: take.seed, before: sentence, after: take.sentences[index] }, take.preview);
         } finally {
             setKeeping(false);
         }

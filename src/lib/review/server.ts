@@ -7,6 +7,12 @@ import type { LibraryEntry, ReviewScript, ReviewSet } from "./types";
 
 export const SESSION_COOKIE = "review_session";
 
+// Private bucket for approved sentence clips: <script_id>/<clip key>.pcm (raw 16-bit 44.1 kHz mono).
+export const AUDIO_BUCKET = "review-audio";
+export const CLIP_KEY = /^[0-9a-f]{64}$/;
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export const clipPath = (scriptId: string, key: string) => `${scriptId}/${key}.pcm`;
+
 let client: SupabaseClient | null = null;
 
 export function db(): SupabaseClient {
@@ -45,7 +51,7 @@ export async function loadReviewData(): Promise<{ sets: ReviewSet[]; scripts: Re
     const [sets, scripts, library] = await Promise.all([
         db().from("sets").select("id, name, file_prefix").order("created_at"),
         db().from("scripts")
-            .select("id, set_id, position, application_number, student_name, status, approved_at, sentences, nouns")
+            .select("id, set_id, position, application_number, student_name, status, approved_at, sentences, nouns, stored_clips, feedback, patches")
             .order("position"),
         db().from("pronunciation_library").select("term, spoken").order("term"),
     ]);

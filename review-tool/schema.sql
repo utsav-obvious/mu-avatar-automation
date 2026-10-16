@@ -69,3 +69,17 @@ create table if not exists public.sentence_changes (
 create index if not exists sentence_changes_script_idx on public.sentence_changes (script_id, created_at);
 create index if not exists sentence_changes_set_idx on public.sentence_changes (set_name, created_at);
 alter table public.sentence_changes enable row level security;
+
+-- Migration (2026-10-16): patching delivered audio.
+-- Approved scripts keep the exact sentence clips they were approved with in the private Storage bucket
+-- "review-audio" (<script_id>/<clip key>.pcm, raw 16-bit 44.1 kHz mono), so a later fix regenerates only
+-- the changed sentence. Delete a set's clips when its videos are done: review-tool/cli/audio.mjs purge.
+-- Client feedback is imported per script (review-tool/cli/import-feedback.mjs); every patched download
+-- is recorded in `patches`, and patched scripts stay approved.
+alter table public.scripts add column if not exists stored_clips text[] not null default '{}'; -- clip keys in storage
+alter table public.scripts add column if not exists feedback jsonb;                           -- { comment, no_regen, source, imported_at, suggestions: [{ index, original, spoken, note }] }
+alter table public.scripts add column if not exists patches jsonb not null default '[]';      -- [{ at, by, sentences, length, source, file }]
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('review-audio', 'review-audio', false, 5242880)
+on conflict (id) do nothing;
