@@ -108,7 +108,7 @@ Production env vars (Vercel → Settings → Environment Variables): `ELEVEN_LAB
 | `review-tool/cli/` | Offline tooling: `prepare-set.mjs`, `library.mjs`, `changes.mjs` |
 | `review-tool/sets/` | One spec per set (`<slug>.json`) + exactly what was uploaded (`<slug>.prepared.json`) |
 | `review-tool/schema.sql` | Supabase schema (sets, scripts, pronunciation_library, sentence_changes) |
-| `c8-scripts/` | Source CSVs (contain student data — keep the repo private) |
+| `c8-scripts/` | Source CSVs — **student data, git-ignored** (the repo is public). Get them from the team; not in a fresh clone |
 | `v4-test/`, `candidate-grid/`, `join-test/` | Experiments that shaped the design (see below) |
 | `src/app/page.tsx`, `src/actions/` | Legacy audit tool |
 

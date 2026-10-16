@@ -122,4 +122,4 @@ The first `vercel deploy` often returns `"status": "error"` with no build error 
 
 - Supabase project **mu-script**; tables `sets`, `scripts`, `pronunciation_library`, `sentence_changes` (see `review-tool/schema.sql`). RLS on, no policies — only the server's secret key can access them. Free plan: pauses after 7 days idle.
 - `.env.local` keys: see `.env.example`.
-- `c8-scripts/*.csv` and `review-tool/sets/*.prepared.json` contain student data — keep them out of deployments and public places.
+- `c8-scripts/*.csv` and `review-tool/sets/*.prepared.json` contain student data — **the GitHub repo is public, so they are git-ignored** (also `.vercelignore`d). A fresh clone won't have them: get the CSVs from the user, and treat Supabase as the source of truth for what was uploaded. Never commit or push them.
