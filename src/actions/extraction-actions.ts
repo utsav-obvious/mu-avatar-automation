@@ -1,16 +1,25 @@
 "use server";
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import OpenAI from "openai";
 
 const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+const openAiKey = process.env.OPEN_AI || process.env.OPENAI_API_KEY;
 
 if (!apiKey) {
     console.warn("GOOGLE_GEMINI_API_KEY is not set in environment variables.");
 }
+if (!openAiKey) {
+    console.warn("OPEN_AI or OPENAI_API_KEY is not set in environment variables.");
+}
 
 const genAI = new GoogleGenerativeAI(apiKey || "");
 const model = genAI.getGenerativeModel({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-pro-preview",
+});
+
+const openai = new OpenAI({
+    apiKey: openAiKey || "",
 });
 
 export interface ExtractedNoun {
@@ -19,9 +28,14 @@ export interface ExtractedNoun {
     variations: string[];
 }
 
-export async function extractProperNouns(script: string): Promise<ExtractedNoun[]> {
-    if (!apiKey) {
+export type LLMProvider = "gemini" | "openai";
+
+export async function extractProperNouns(script: string, provider: LLMProvider = "gemini"): Promise<ExtractedNoun[]> {
+    if (provider === "gemini" && !apiKey) {
         throw new Error("Gemini API Key is missing. Please check your .env.local file.");
+    }
+    if (provider === "openai" && !openAiKey) {
+        throw new Error("OpenAI API Key is missing. Please check your .env.local file.");
     }
 
     const prompt = `
@@ -44,46 +58,73 @@ export async function extractProperNouns(script: string): Promise<ExtractedNoun[
     8. Pause Control (ellipses)
     9. Capitalization for emphasis.
 
-    Return a strictly valid JSON array:
-    [
-      {
-        "original": "Proper Noun",
-        "context": "Sentence context...",
-        "variations": ["Phonetic 1", "Phonetic 2", "Phonetic 3", "Hindi Translation"]
-      }
-    ]
+    Return a strictly valid JSON object with a single key "nouns" containing an array of objects:
+    {
+      "nouns": [
+        {
+          "original": "Proper Noun",
+          "context": "Sentence context...",
+          "variations": ["Phonetic 1", "Phonetic 2", "Phonetic 3", "Hindi Translation"]
+        }
+      ]
+    }
 
     Text:
     "${script}"
   `;
 
     try {
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text().trim();
+        let text = "";
 
-        // Attempt to parse JSON. Gemini Flash is usually good but sometimes adds markdown blocks.
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) {
-            throw new Error("Failed to find JSON array in Gemini response.");
+        if (provider === "openai") {
+            const completion = await openai.chat.completions.create({
+                messages: [{ role: "user", content: prompt }],
+                model: "gpt-4o",
+                response_format: { type: "json_object" },
+            });
+            text = completion.choices[0].message.content || "";
+            const data = JSON.parse(text);
+            return (data.nouns || []).map((item: any) => ({
+                ...item,
+                variations: item.variations || [item.original, item.original, item.original, item.original]
+            }));
+        } else {
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            text = response.text().trim();
+
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) {
+                // Fallback to array match if Gemini ignores the prompt changes
+                const arrayMatch = text.match(/\[[\s\S]*\]/);
+                if (arrayMatch) {
+                    const data = JSON.parse(arrayMatch[0]);
+                    return data.map((item: any) => ({
+                        ...item,
+                        variations: item.variations || [item.original, item.original, item.original, item.original]
+                    }));
+                }
+                throw new Error("Failed to find JSON in Gemini response.");
+            }
+
+            const data = JSON.parse(jsonMatch[0]);
+            return (data.nouns || []).map((item: any) => ({
+                ...item,
+                variations: item.variations || [item.original, item.original, item.original, item.original]
+            }));
         }
-
-        const data = JSON.parse(jsonMatch[0]);
-
-        // Ensure variations exist
-        return data.map((item: any) => ({
-            ...item,
-            variations: item.variations || [item.original, item.original, item.original, item.original]
-        }));
     } catch (error) {
         console.error("Error extracting proper nouns:", error);
         throw new Error("Failed to extract proper nouns from the script.");
     }
 }
 
-export async function regenerateNounVariations(noun: string, context: string, existingVariations: string[] = []): Promise<string[]> {
-    if (!apiKey) {
+export async function regenerateNounVariations(noun: string, context: string, existingVariations: string[] = [], provider: LLMProvider = "gemini"): Promise<string[]> {
+    if (provider === "gemini" && !apiKey) {
         throw new Error("Gemini API Key is missing.");
+    }
+    if (provider === "openai" && !openAiKey) {
+        throw new Error("OpenAI API Key is missing.");
     }
 
     const prompt = `
@@ -93,18 +134,36 @@ export async function regenerateNounVariations(noun: string, context: string, ex
     1. Do not suggest any of these existing variations: ${existingVariations.join(", ")}.
     2. Focus on phonetic respellings, syllable timing, and emphasis techniques.
     
-    Return ONLY a JSON array of 3 unique strings.
+    Return ONLY a valid JSON object with a single key "variations" containing an array of 3 unique strings:
+    { "variations": ["var1", "var2", "var3"] }
     `;
 
     try {
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        const text = response.text().trim();
+        let text = "";
 
-        const jsonMatch = text.match(/\[[\s\S]*\]/);
-        if (!jsonMatch) return [noun, noun, noun];
+        if (provider === "openai") {
+            const completion = await openai.chat.completions.create({
+                messages: [{ role: "user", content: prompt }],
+                model: "gpt-4o",
+                response_format: { type: "json_object" },
+            });
+            text = completion.choices[0].message.content || "";
+        } else {
+            const result = await model.generateContent(prompt);
+            const response = await result.response;
+            text = response.text().trim();
+        }
 
-        return JSON.parse(jsonMatch[0]);
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+            // Fallback for array
+            const arrayMatch = text.match(/\[[\s\S]*\]/);
+            if (arrayMatch) return JSON.parse(arrayMatch[0]);
+            return [noun, noun, noun];
+        }
+
+        const parsed = JSON.parse(jsonMatch[0]);
+        return parsed.variations || [noun, noun, noun];
     } catch (error) {
         console.error("Error regenerating variations:", error);
         return [noun, noun, noun];

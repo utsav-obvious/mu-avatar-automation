@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { extractProperNouns, ExtractedNoun, regenerateNounVariations } from "@/actions/extraction-actions";
+import { extractProperNouns, ExtractedNoun, regenerateNounVariations, LLMProvider } from "@/actions/extraction-actions";
 import { generateVariationAudio, WordAlignment, AudioResponse, TTSProvider } from "@/actions/audio-actions";
 import { toast } from "sonner";
-import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent, Edit2, ChevronDown } from "lucide-react";
+import { Loader2, Music, Search, CheckCircle2, RotateCcw, Play, Pause, Check, Download, Copy, FileText, FastForward, Rewind, History, Save, Trash2, Sparkles, Volume2, Hash, Percent, Edit2, ChevronDown, Minus } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
 import Link from "next/link";
 import { useRef, useEffect } from "react";
@@ -42,6 +42,8 @@ export default function AudioAuditDashboard() {
   const [audioCache, setAudioCache] = useState<Record<string, AudioResponse>>({});
   const [audioLoading, setAudioLoading] = useState<{ index: number; vIndex: number | "manual" | "context" | "original" | "scratchpad" } | null>(null);
   const [ttsProvider, setTtsProvider] = useState<TTSProvider>("elevenlabs");
+  const [llmProvider, setLlmProvider] = useState<LLMProvider>("openai");
+  const [skipAudit, setSkipAudit] = useState(false);
 
   // Scratchpad State
   const [scratchpadText, setScratchpadText] = useState("");
@@ -375,7 +377,8 @@ export default function AudioAuditDashboard() {
       const originalAudioSrc = finalAudioRef.current!.src;
 
       const patchDuration = await getAudioDuration(patchData);
-      const originalDuration = alignment.end - alignment.start;
+      const adjustedStart = Math.max(0, alignment.start - 0.05);
+      const originalDuration = alignment.end - adjustedStart;
       const diff = patchDuration - originalDuration;
 
       console.log(`Durations - Patch: ${patchDuration.toFixed(3)}s, Original: ${originalDuration.toFixed(3)}s, Diff: ${diff.toFixed(3)}s`);
@@ -383,7 +386,7 @@ export default function AudioAuditDashboard() {
       const patchedUrl = await spliceAudio(
         originalAudioSrc,
         patchData,
-        alignment.start,
+        adjustedStart,
         alignment.end
       );
 
@@ -450,7 +453,7 @@ export default function AudioAuditDashboard() {
         patchDuration = await getAudioDuration(audioData);
       }
 
-      const startTime = phraseWords[0].start;
+      const startTime = Math.max(0, phraseWords[0].start - 0.05);
       const endTime = phraseWords[phraseWords.length - 1].end;
       const originalDuration = endTime - startTime;
       const diff = patchDuration - originalDuration;
@@ -517,7 +520,7 @@ export default function AudioAuditDashboard() {
 
     setIsAnalyzing(true);
     try {
-      const nouns = await extractProperNouns(script);
+      const nouns = await extractProperNouns(script, llmProvider);
       setExtractedNouns(nouns);
       toast.success(`Successfully extracted ${nouns.length} proper nouns.`);
     } catch (error) {
@@ -533,7 +536,7 @@ export default function AudioAuditDashboard() {
     setIsRegenerating(prev => ({ ...prev, [index]: true }));
 
     try {
-      const newVariations = await regenerateNounVariations(noun.original, noun.context, noun.variations);
+      const newVariations = await regenerateNounVariations(noun.original, noun.context, noun.variations, llmProvider);
       const updatedNouns = [...extractedNouns];
       updatedNouns[index] = { ...noun, variations: [...noun.variations, ...newVariations] };
       setExtractedNouns(updatedNouns);
@@ -616,6 +619,25 @@ export default function AudioAuditDashboard() {
               Scrub Utility
             </Button>
           </Link>
+
+          <div className="flex bg-slate-900/50 p-1 rounded-xl border border-slate-800">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 px-3 rounded-lg text-xs font-bold transition-all ${llmProvider === "gemini" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 hover:text-slate-300"}`}
+              onClick={() => setLlmProvider("gemini")}
+            >
+              Gemini
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-8 px-3 rounded-lg text-xs font-bold transition-all ${llmProvider === "openai" ? "bg-indigo-500/20 text-indigo-400" : "text-slate-500 hover:text-slate-300"}`}
+              onClick={() => setLlmProvider("openai")}
+            >
+              OpenAI
+            </Button>
+          </div>
 
           <div className="flex bg-slate-900/50 p-1 rounded-xl border border-slate-800">
             <Button
@@ -730,23 +752,52 @@ export default function AudioAuditDashboard() {
               <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">1</div>
               <h2 className="text-xl font-semibold">Script Input</h2>
             </div>
-            <Button
-              onClick={handleAnalyze}
-              disabled={isAnalyzing || !script.trim()}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white transition-all px-6 py-6 h-auto text-lg rounded-xl shadow-lg shadow-indigo-500/20"
-            >
-              {isAnalyzing ? (
-                <>
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Analyzing Script...
-                </>
-              ) : (
-                <>
-                  <Search className="mr-2 h-5 w-5" />
-                  Extract Proper Nouns
-                </>
-              )}
-            </Button>
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2 cursor-pointer text-slate-400 hover:text-white transition-colors group">
+                <input
+                  type="checkbox"
+                  className="w-5 h-5 rounded border-slate-700 bg-slate-900/50 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-slate-950 transition-all cursor-pointer"
+                  checked={skipAudit}
+                  onChange={(e) => setSkipAudit(e.target.checked)}
+                />
+                <span className="text-sm font-medium tracking-wide">Skip Audit Proper Noun</span>
+              </label>
+
+              <Button
+                onClick={() => {
+                  if (skipAudit) {
+                    if (!script.trim()) {
+                      toast.error("Please enter a script first.");
+                      return;
+                    }
+                    setExtractedNouns([]);
+                    setFinalScript(script);
+                    toast.success("Ready for review and export.");
+                  } else {
+                    handleAnalyze();
+                  }
+                }}
+                disabled={(isAnalyzing || !script.trim()) && !skipAudit}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white transition-all px-6 py-6 h-auto text-lg rounded-xl shadow-lg shadow-indigo-500/20 min-w-[240px]"
+              >
+                {isAnalyzing && !skipAudit ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Analyzing Script...
+                  </>
+                ) : skipAudit ? (
+                  <>
+                    <FastForward className="mr-2 h-5 w-5" />
+                    Skip to Review
+                  </>
+                ) : (
+                  <>
+                    <Search className="mr-2 h-5 w-5" />
+                    Extract Proper Nouns
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
           <Textarea
             placeholder="Paste your script here... (e.g., Ramesh from Bangalore will join the call at IIT Madras.)"
@@ -757,7 +808,7 @@ export default function AudioAuditDashboard() {
         </section>
 
         {/* Extracted Nouns Section */}
-        {extractedNouns.length > 0 ? (
+        {extractedNouns.length > 0 && (
           <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             <div className="flex items-center gap-2 mb-6">
               <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">2</div>
@@ -1070,63 +1121,132 @@ export default function AudioAuditDashboard() {
             </div>
 
             {/* Export Section */}
-            <section className="pt-12 space-y-6">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">3</div>
-                <h2 className="text-xl font-semibold">Review & Export</h2>
-              </div>
+          </section>
+        )}
 
-              {!finalScript ? (
-                <Card className="bg-slate-900 border-indigo-500/10 p-12 text-center border-dashed border-2 rounded-3xl">
-                  <FileText className="w-12 h-12 text-slate-700 mx-auto mb-4" />
-                  <p className="text-slate-500 mb-6">Audited nouns will be replaced. Others will use original text.</p>
-                  <Button
-                    onClick={generateAuditedScript}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-8"
-                  >
-                    Generate Final Script
-                  </Button>
-                </Card>
-              ) : (
-                <Card className="bg-slate-900 border-indigo-500/30 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
-                  <div className="bg-indigo-500/5 px-6 py-4 border-b border-indigo-500/10 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-indigo-400" />
-                      <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">Final Audited Script</span>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
-                        onClick={() => {
-                          if (!finalScript) return;
-                          const updated = finalScript.replace(/(\d+)\.(\d+)/g, (match, p1, p2) => {
-                            const digits = p2.split("").join(" ");
-                            return `${p1} point ${digits}`;
-                          });
-                          setFinalScript(updated);
-                          toast.success("Numbers formatted!");
-                        }}
-                      >
-                        <Hash className="w-3.5 h-3.5" />
-                        Format Numbers
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
-                        onClick={() => {
-                          if (!finalScript) return;
-                          const updated = finalScript.replace(/%/g, " percentage");
-                          setFinalScript(updated);
-                          toast.success("Percentages formatted!");
-                        }}
-                      >
-                        <Percent className="w-3.5 h-3.5" />
-                        Format %
-                      </Button>
-                      {/* <Button
+        {/* Export Section */}
+        {(extractedNouns.length > 0 || finalScript !== null) && (
+          <section className="space-y-6 pt-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 font-bold border border-indigo-500/20">3</div>
+              <h2 className="text-xl font-semibold">Review & Export</h2>
+            </div>
+
+            {!finalScript ? (
+              <Card className="bg-slate-900 border-indigo-500/10 p-12 text-center border-dashed border-2 rounded-3xl">
+                <FileText className="w-12 h-12 text-slate-700 mx-auto mb-4" />
+                <p className="text-slate-500 mb-6">Audited nouns will be replaced. Others will use original text.</p>
+                <Button
+                  onClick={generateAuditedScript}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl px-8"
+                >
+                  Generate Final Script
+                </Button>
+              </Card>
+            ) : (
+              <Card className="bg-slate-900 border-indigo-500/30 rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+                <div className="bg-indigo-500/5 px-6 py-4 border-b border-indigo-500/10 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2 shrink-0">
+                    <FileText className="w-4 h-4 text-indigo-400" />
+                    <span className="text-xs font-bold uppercase tracking-widest text-indigo-400">Final Audited Script</span>
+                  </div>
+                  <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar [&>*]:shrink-0">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                      onClick={() => {
+                        if (!finalScript) return;
+                        const updated = finalScript.replace(/(\d+)\.(\d+)/g, (match, p1, p2) => {
+                          const digits = p2.split("").join(" ");
+                          return `${p1} point ${digits}`;
+                        });
+                        setFinalScript(updated);
+                        toast.success("Numbers formatted!");
+                      }}
+                    >
+                      <Hash className="w-3.5 h-3.5" />
+                      Format Numbers
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                      onClick={() => {
+                        if (!finalScript) return;
+                        const updated = finalScript.replace(/%/g, " percentage");
+                        setFinalScript(updated);
+                        toast.success("Percentages formatted!");
+                      }}
+                    >
+                      <Percent className="w-3.5 h-3.5" />
+                      Format %
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                      onClick={() => {
+                        if (!finalScript) return;
+
+                        // Check for manual text selection in the textarea first
+                        const textarea = document.getElementById("final-script-textarea") as HTMLTextAreaElement | null;
+                        if (textarea && textarea.selectionStart !== textarea.selectionEnd) {
+                          const start = textarea.selectionStart;
+                          const end = textarea.selectionEnd;
+                          const selectedText = finalScript.substring(start, end);
+                          if (selectedText.trim().includes(" ")) {
+                            const hyphenated = selectedText.trim().split(/\s+/).join("-");
+                            const updated = finalScript.substring(0, start) + selectedText.replace(selectedText.trim(), hyphenated) + finalScript.substring(end);
+                            setFinalScript(updated);
+                            toast.success("Selected text hyphenated!");
+
+                            // Preserve selection
+                            setTimeout(() => {
+                              textarea.focus();
+                              textarea.setSelectionRange(start, start + selectedText.replace(selectedText.trim(), hyphenated).length);
+                            }, 10);
+                            return;
+                          }
+                        }
+
+                        let updated = finalScript;
+
+                        const sortedNouns = [...extractedNouns].sort((a, b) => {
+                          const aTarget = a.selectedVariation || a.customVariation || a.original;
+                          const bTarget = b.selectedVariation || b.customVariation || b.original;
+                          return bTarget.length - aTarget.length;
+                        });
+
+                        sortedNouns.forEach(noun => {
+                          const target = noun.selectedVariation || noun.customVariation || noun.original;
+                          // Hyphenate the target variant (if it has spaces)
+                          if (target.trim().includes(" ")) {
+                            const hyphenated = target.trim().split(/\s+/).join("-");
+                            const escapedTarget = target.trim().replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+                            const isAlphanumeric = /^[a-z0-9\s]+$/i.test(target.trim());
+                            const regex = new RegExp(isAlphanumeric ? `\\\\b${escapedTarget}\\\\b` : escapedTarget, "giu");
+                            updated = updated.replace(regex, hyphenated);
+                          }
+
+                          // Also hyphenate the original string instances if the target has spaces (to ensure base nouns get hyphenated)
+                          if (noun.original.trim().includes(" ")) {
+                            const hyphenatedOriginal = noun.original.trim().split(/\s+/).join("-");
+                            const escapedOriginal = noun.original.trim().replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+                            const isOriginalAlphanumeric = /^[a-z0-9\s]+$/i.test(noun.original.trim());
+                            const regexOriginal = new RegExp(isOriginalAlphanumeric ? `\\\\b${escapedOriginal}\\\\b` : escapedOriginal, "giu");
+                            updated = updated.replace(regexOriginal, hyphenatedOriginal);
+                          }
+                        });
+
+                        setFinalScript(updated);
+                        toast.success("Proper nouns hyphenated!");
+                      }}
+                    >
+                      <Minus className="w-3.5 h-3.5" />
+                      Hyphenate Nouns
+                    </Button>
+                    {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -1140,36 +1260,36 @@ export default function AudioAuditDashboard() {
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         Clean CGPA
                       </Button> */}
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
-                        onClick={() => {
-                          if (!finalScript) return;
-                          const updated = finalScript.replace(/\bTetr\b/g, "Tet-er");
-                          setFinalScript(updated);
-                          toast.success("Tetr fixed!");
-                        }}
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                        Fix Tetr
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
-                        onClick={() => {
-                          if (!finalScript) return;
-                          // Adds ... after sentence-ending punctuation if followed by space, avoiding double adds
-                          const updated = finalScript.replace(/(?<=[.!?])\s+(?!\.\.\.)/g, " ... ");
-                          setFinalScript(updated);
-                          toast.success("Humanized pauses added!");
-                        }}
-                      >
-                        <Volume2 className="w-3.5 h-3.5" />
-                        Humanize
-                      </Button>
-                      {/* <Button
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                      onClick={() => {
+                        if (!finalScript) return;
+                        const updated = finalScript.replace(/\bTetr\b/g, "Tet-er");
+                        setFinalScript(updated);
+                        toast.success("Tetr fixed!");
+                      }}
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                      Fix Tetr
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
+                      onClick={() => {
+                        if (!finalScript) return;
+                        // Adds ... after sentence-ending punctuation if followed by space, avoiding double adds
+                        const updated = finalScript.replace(/(?<=[.!?])\s+(?!\.\.\.)/g, " ... ");
+                        setFinalScript(updated);
+                        toast.success("Humanized pauses added!");
+                      }}
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                      Humanize
+                    </Button>
+                    {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -1183,7 +1303,7 @@ export default function AudioAuditDashboard() {
                         <Volume2 className="w-3.5 h-3.5" />
                         Space Punctuation
                       </Button> */}
-                      {/* <Button
+                    {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -1211,7 +1331,7 @@ export default function AudioAuditDashboard() {
                         <Sparkles className="w-3.5 h-3.5" />
                         Excite Ending
                       </Button> */}
-                      {/* <Button
+                    {/* <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5"
@@ -1236,369 +1356,371 @@ export default function AudioAuditDashboard() {
                         <FileText className="w-3.5 h-3.5" />
                         Split Paragraphs
                       </Button> */}
-                      <Button variant="ghost" size="sm" className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5" onClick={generateAuditedScript}>
-                        <RotateCcw className="w-3.5 h-3.5" />
-                        Regenerate
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={copyToClipboard}>
-                        <Copy className="w-3.5 h-3.5 mr-2" />
-                        Copy text
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={() => {
-                        setFinalScript(null);
-                        setIsPlayingFinal(false);
-                        stopAudio();
-                      }}>
-                        Reset
+                    <Button variant="ghost" size="sm" className="h-8 text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 gap-1.5" onClick={generateAuditedScript}>
+                      <RotateCcw className="w-3.5 h-3.5" />
+                      Regenerate
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={copyToClipboard}>
+                      <Copy className="w-3.5 h-3.5 mr-2" />
+                      Copy text
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 text-slate-400 hover:text-white" onClick={() => {
+                      setFinalScript(null);
+                      setIsPlayingFinal(false);
+                      stopAudio();
+                    }}>
+                      Reset
+                    </Button>
+                  </div>
+                </div>
+                <div className="p-8 space-y-8">
+                  <Textarea
+                    id="final-script-textarea"
+                    className="min-h-[200px] bg-slate-950 border-slate-800 text-lg leading-relaxed text-slate-300 focus-visible:ring-indigo-500 transition-all rounded-2xl p-6 font-serif resize-none"
+                    value={finalScript}
+                    onChange={(e) => setFinalScript(e.target.value)}
+                  />
+
+                  <Button
+                    onClick={handlePlayFinalAudio}
+                    disabled={isFinalLoading}
+                    className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white transition-all rounded-xl shadow-lg shadow-indigo-500/20 text-lg font-semibold gap-3"
+                  >
+                    {isFinalLoading ? (
+                      <>
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                        Generating Audio...
+                      </>
+                    ) : (
+                      <>
+                        <Music className="w-6 h-6" />
+                        {finalScript && audioCache[finalScript] ? "Play Audio" : "Generate Final Audio"}
+                      </>
+                    )}
+                  </Button>
+
+                  <div className="pt-4 border-t border-slate-800/50 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
+                        <Search className="w-3 h-3" />
+                        Word Scratchpad
+                      </label>
+                      <span className="text-[10px] text-slate-500 italic">Test pronunciations on the fly</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Type a word to test..."
+                        className="bg-slate-950 border-slate-800 rounded-xl px-4 h-11 text-sm focus-visible:ring-indigo-500 transition-all font-sans"
+                        value={scratchpadText}
+                        onChange={(e) => setScratchpadText(e.target.value)}
+                      />
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className={`h-11 w-11 rounded-xl border-slate-800 transition-all ${playingAudio?.vIndex === "scratchpad" ? "text-white border-indigo-500 bg-indigo-500/10" : "text-slate-400 hover:text-white"}`}
+                        onClick={() => scratchpadText && handlePlay(scratchpadText, -1, "scratchpad")}
+                        disabled={!scratchpadText || (audioLoading?.vIndex === "scratchpad")}
+                      >
+                        {audioLoading?.vIndex === "scratchpad" ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : playingAudio?.vIndex === "scratchpad" ? (
+                          <Pause className="w-5 h-5 fill-current" />
+                        ) : (
+                          <Play className="w-5 h-5 fill-current" />
+                        )}
                       </Button>
                     </div>
                   </div>
-                  <div className="p-8 space-y-8">
-                    <Textarea
-                      className="min-h-[200px] bg-slate-950 border-slate-800 text-lg leading-relaxed text-slate-300 focus-visible:ring-indigo-500 transition-all rounded-2xl p-6 font-serif resize-none"
-                      value={finalScript}
-                      onChange={(e) => setFinalScript(e.target.value)}
-                    />
 
-                    <Button
-                      onClick={handlePlayFinalAudio}
-                      disabled={isFinalLoading}
-                      className="w-full h-14 bg-indigo-600 hover:bg-indigo-700 text-white transition-all rounded-xl shadow-lg shadow-indigo-500/20 text-lg font-semibold gap-3"
-                    >
-                      {isFinalLoading ? (
-                        <>
-                          <Loader2 className="w-6 h-6 animate-spin" />
-                          Generating Audio...
-                        </>
-                      ) : (
-                        <>
-                          <Music className="w-6 h-6" />
-                          {finalScript && audioCache[finalScript] ? "Play Audio" : "Generate Final Audio"}
-                        </>
-                      )}
-                    </Button>
+                  {/* Advanced Audio Player */}
+                  <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 space-y-6">
+                    {/* Live Transcript / Word Scrubbing */}
+                    {wordAlignments.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
+                            <FileText className="w-3 h-3" />
+                            Live Transcript (Click word to scrub)
+                          </label>
+                          <span className="text-[10px] text-slate-500 italic">Shift + Click for phrase selection</span>
+                        </div>
 
-                    <div className="pt-4 border-t border-slate-800/50 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
-                          <Search className="w-3 h-3" />
-                          Word Scratchpad
-                        </label>
-                        <span className="text-[10px] text-slate-500 italic">Test pronunciations on the fly</span>
-                      </div>
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="Type a word to test..."
-                          className="bg-slate-950 border-slate-800 rounded-xl px-4 h-11 text-sm focus-visible:ring-indigo-500 transition-all font-sans"
-                          value={scratchpadText}
-                          onChange={(e) => setScratchpadText(e.target.value)}
-                        />
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className={`h-11 w-11 rounded-xl border-slate-800 transition-all ${playingAudio?.vIndex === "scratchpad" ? "text-white border-indigo-500 bg-indigo-500/10" : "text-slate-400 hover:text-white"}`}
-                          onClick={() => scratchpadText && handlePlay(scratchpadText, -1, "scratchpad")}
-                          disabled={!scratchpadText || (audioLoading?.vIndex === "scratchpad")}
-                        >
-                          {audioLoading?.vIndex === "scratchpad" ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : playingAudio?.vIndex === "scratchpad" ? (
-                            <Pause className="w-5 h-5 fill-current" />
-                          ) : (
-                            <Play className="w-5 h-5 fill-current" />
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-
-                    {/* Advanced Audio Player */}
-                    <div className="bg-slate-950/50 border border-slate-800 rounded-2xl p-6 space-y-6">
-                      {/* Live Transcript / Word Scrubbing */}
-                      {wordAlignments.length > 0 && (
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[10px] font-bold uppercase tracking-widest text-indigo-400 flex items-center gap-2">
-                              <FileText className="w-3 h-3" />
-                              Live Transcript (Click word to scrub)
-                            </label>
-                            <span className="text-[10px] text-slate-500 italic">Shift + Click for phrase selection</span>
-                          </div>
-
-                          {/* Selection Toolbar */}
-                          {selectionStart !== null && (
-                            <div className="space-y-3 p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl animate-in fade-in slide-in-from-top-1">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <div className="bg-indigo-500 p-1.5 rounded-lg">
-                                    <Sparkles className="w-4 h-4 text-white" />
-                                  </div>
-                                  <div>
-                                    <p className="text-xs font-bold text-white uppercase tracking-wider">
-                                      {selectionEnd !== null ? "Phrase Scratchpad" : "Word Selected"}
-                                    </p>
-                                    <p className="text-[10px] text-indigo-300">
-                                      {selectionEnd !== null
-                                        ? `Editing range: ${Math.min(selectionStart, selectionEnd)} - ${Math.max(selectionStart, selectionEnd)}`
-                                        : "Shift-click another word to select a range"}
-                                    </p>
-                                  </div>
+                        {/* Selection Toolbar */}
+                        {selectionStart !== null && (
+                          <div className="space-y-3 p-4 bg-indigo-500/10 border border-indigo-500/20 rounded-xl animate-in fade-in slide-in-from-top-1">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="bg-indigo-500 p-1.5 rounded-lg">
+                                  <Sparkles className="w-4 h-4 text-white" />
                                 </div>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="h-7 text-[10px] text-slate-500 hover:text-white"
-                                  onClick={() => { setSelectionStart(null); setSelectionEnd(null); setTempPhraseVariation(""); }}
-                                >
-                                  Cancel
-                                </Button>
+                                <div>
+                                  <p className="text-xs font-bold text-white uppercase tracking-wider">
+                                    {selectionEnd !== null ? "Phrase Scratchpad" : "Word Selected"}
+                                  </p>
+                                  <p className="text-[10px] text-indigo-300">
+                                    {selectionEnd !== null
+                                      ? `Editing range: ${Math.min(selectionStart, selectionEnd)} - ${Math.max(selectionStart, selectionEnd)}`
+                                      : "Shift-click another word to select a range"}
+                                  </p>
+                                </div>
                               </div>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 text-[10px] text-slate-500 hover:text-white"
+                                onClick={() => { setSelectionStart(null); setSelectionEnd(null); setTempPhraseVariation(""); }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
 
-                              {selectionEnd !== null && (
-                                <div className="flex flex-col gap-3 pt-1">
-                                  <div className="flex items-center gap-2">
-                                    <Popover>
-                                      <PopoverTrigger asChild>
-                                        <Button
-                                          variant="outline"
-                                          className="h-10 px-3 bg-slate-950 border-slate-800 text-slate-400 hover:text-white flex items-center gap-2 shrink-0"
-                                        >
-                                          <Hash className="w-4 h-4" />
-                                          <span className="text-xs">Pronoun Shortcut</span>
-                                          <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
-                                        </Button>
-                                      </PopoverTrigger>
-                                      <PopoverContent className="w-56 p-2 bg-slate-900 border-slate-800 shadow-2xl">
-                                        <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar">
-                                          {extractedNouns.map((noun, nIdx) => (
-                                            <button
-                                              key={nIdx}
-                                              className="w-full text-left px-3 py-1.5 rounded-md text-xs text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-400 transition-colors flex items-center justify-between group/noun"
-                                              onClick={() => {
-                                                const approvedText = noun.selectedVariation || noun.customVariation || noun.original;
-                                                setTempPhraseVariation(approvedText);
-                                                toast.info(`Applied pronoun: "${approvedText}"`);
-                                              }}
-                                            >
-                                              <span className="truncate">{noun.original}</span>
-                                              <span className="text-[9px] text-slate-600 group-hover/noun:text-indigo-500/50 italic shrink-0">
-                                                {noun.selectedVariation || noun.customVariation ? "Approved" : "Default"}
-                                              </span>
-                                            </button>
-                                          ))}
-                                          {extractedNouns.length === 0 && (
-                                            <p className="px-3 py-4 text-[10px] text-slate-600 text-center">No pronouns analyzed yet.</p>
-                                          )}
-                                        </div>
-                                      </PopoverContent>
-                                    </Popover>
-                                    <Input
-                                      value={tempPhraseVariation}
-                                      onChange={(e) => setTempPhraseVariation(e.target.value)}
-                                      placeholder="Type phrase variation phonetic respelling..."
-                                      className="h-10 text-xs bg-slate-950 border-slate-800"
-                                    />
-                                  </div>
-                                  <div className="flex gap-2">
-                                    <Button
-                                      variant="outline"
-                                      className="flex-1 h-9 text-xs border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
-                                      onClick={() => handleTryVariation(tempPhraseVariation)}
-                                    >
-                                      <Play className="w-4 h-4 mr-2" />
-                                      Try Selection
-                                    </Button>
-                                    <Button
-                                      className="flex-1 h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold"
-                                      onClick={handlePatchPhrase}
-                                      disabled={isPatching !== null}
-                                    >
-                                      {isPatching === -1 ? (
-                                        <Loader2 className="w-3 h-3 animate-spin mr-2" />
-                                      ) : (
-                                        <CheckCircle2 className="w-3 h-3 mr-2" />
-                                      )}
-                                      Patch Phrase
-                                    </Button>
-                                  </div>
-
-                                  {/* Special Case: Auditor Shortcut for Phrases */}
-                                  {extractedNouns.some(n =>
-                                    normalizeForMatch(n.original) === normalizeForMatch(tempPhraseVariation.trim())
-                                  ) && (
-                                      <div className="pt-2 border-t border-indigo-500/20">
-                                        <Button
-                                          variant="ghost"
-                                          className="w-full justify-start h-8 text-[10px] text-indigo-400 hover:bg-indigo-500/10 px-0"
-                                          onClick={() => {
-                                            const noun = extractedNouns.find(n =>
-                                              normalizeForMatch(n.original) === normalizeForMatch(tempPhraseVariation.trim())
-                                            );
-                                            if (noun) {
+                            {selectionEnd !== null && (
+                              <div className="flex flex-col gap-3 pt-1">
+                                <div className="flex items-center gap-2">
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        variant="outline"
+                                        className="h-10 px-3 bg-slate-950 border-slate-800 text-slate-400 hover:text-white flex items-center gap-2 shrink-0"
+                                      >
+                                        <Hash className="w-4 h-4" />
+                                        <span className="text-xs">Pronoun Shortcut</span>
+                                        <ChevronDown className="w-3 h-3 ml-1 opacity-50" />
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-56 p-2 bg-slate-900 border-slate-800 shadow-2xl">
+                                      <div className="space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar">
+                                        {extractedNouns.map((noun, nIdx) => (
+                                          <button
+                                            key={nIdx}
+                                            className="w-full text-left px-3 py-1.5 rounded-md text-xs text-slate-400 hover:bg-indigo-500/10 hover:text-indigo-400 transition-colors flex items-center justify-between group/noun"
+                                            onClick={() => {
                                               const approvedText = noun.selectedVariation || noun.customVariation || noun.original;
                                               setTempPhraseVariation(approvedText);
-                                              toast.info(`Applied approved greeting: "${approvedText}"`);
-                                            }
-                                          }}
-                                          disabled={isPatching !== null}
-                                        >
-                                          <CheckCircle2 className="w-4 h-4 mr-2" />
-                                          Use Auditor Approved Greeting Variation
-                                        </Button>
+                                              toast.info(`Applied pronoun: "${approvedText}"`);
+                                            }}
+                                          >
+                                            <span className="truncate">{noun.original}</span>
+                                            <span className="text-[9px] text-slate-600 group-hover/noun:text-indigo-500/50 italic shrink-0">
+                                              {noun.selectedVariation || noun.customVariation ? "Approved" : "Default"}
+                                            </span>
+                                          </button>
+                                        ))}
+                                        {extractedNouns.length === 0 && (
+                                          <p className="px-3 py-4 text-[10px] text-slate-600 text-center">No pronouns analyzed yet.</p>
+                                        )}
                                       </div>
-                                    )}
+                                    </PopoverContent>
+                                  </Popover>
+                                  <Input
+                                    value={tempPhraseVariation}
+                                    onChange={(e) => setTempPhraseVariation(e.target.value)}
+                                    placeholder="Type phrase variation phonetic respelling..."
+                                    className="h-10 text-xs bg-slate-950 border-slate-800"
+                                  />
                                 </div>
-                              )}
-                            </div>
-                          )}
-                          <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800/50 text-base leading-relaxed text-slate-400 flex flex-wrap gap-x-1.5 gap-y-1 max-h-[150px] overflow-y-auto custom-scrollbar">
-                            {wordAlignments.map((alignment, idx) => {
-                              const normTarget = normalizeForMatch(alignment.word);
-                              const isProperNoun = extractedNouns.some(n =>
-                                normalizeForMatch(n.original) === normTarget ||
-                                (n.selectedVariation && normalizeForMatch(n.selectedVariation) === normTarget) ||
-                                (n.customVariation && normalizeForMatch(n.customVariation) === normTarget)
-                              );
+                                <div className="flex gap-2">
+                                  <Button
+                                    variant="outline"
+                                    className="flex-1 h-9 text-xs border-indigo-500/30 text-indigo-400 hover:bg-indigo-500/10"
+                                    onClick={() => handleTryVariation(tempPhraseVariation)}
+                                  >
+                                    <Play className="w-4 h-4 mr-2" />
+                                    Try Selection
+                                  </Button>
+                                  <Button
+                                    className="flex-1 h-9 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold"
+                                    onClick={handlePatchPhrase}
+                                    disabled={isPatching !== null}
+                                  >
+                                    {isPatching === -1 ? (
+                                      <Loader2 className="w-3 h-3 animate-spin mr-2" />
+                                    ) : (
+                                      <CheckCircle2 className="w-3 h-3 mr-2" />
+                                    )}
+                                    Patch Phrase
+                                  </Button>
+                                </div>
 
-                              return (
-                                <div key={idx} className="group/word relative py-1">
-                                  <span
-                                    onClick={(e) => {
-                                      if (e.shiftKey) {
-                                        if (selectionStart === null) {
-                                          setSelectionStart(idx);
-                                        } else {
-                                          setSelectionEnd(idx);
-                                          // Initialize phrase variation with current words
-                                          const start = Math.min(selectionStart, idx);
-                                          const end = Math.max(selectionStart, idx);
-                                          const text = wordAlignments.slice(start, end + 1).map(a => a.word).join(" ");
-                                          setTempPhraseVariation(text);
-                                        }
-                                      } else {
-                                        setSelectionStart(idx);
-                                        setSelectionEnd(null);
-                                        // Initialize variation for single word selection
-                                        setTempPhraseVariation(alignment.word.replace(/[.,!?]$/, "").trim());
-
-                                        if (finalAudioRef.current) {
-                                          finalAudioRef.current.currentTime = alignment.start;
-                                          setCurrentTime(alignment.start);
-                                          if (!isPlayingFinal) {
-                                            finalAudioRef.current.play();
-                                            setIsPlayingFinal(true);
+                                {/* Special Case: Auditor Shortcut for Phrases */}
+                                {extractedNouns.some(n =>
+                                  normalizeForMatch(n.original) === normalizeForMatch(tempPhraseVariation.trim())
+                                ) && (
+                                    <div className="pt-2 border-t border-indigo-500/20">
+                                      <Button
+                                        variant="ghost"
+                                        className="w-full justify-start h-8 text-[10px] text-indigo-400 hover:bg-indigo-500/10 px-0"
+                                        onClick={() => {
+                                          const noun = extractedNouns.find(n =>
+                                            normalizeForMatch(n.original) === normalizeForMatch(tempPhraseVariation.trim())
+                                          );
+                                          if (noun) {
+                                            const approvedText = noun.selectedVariation || noun.customVariation || noun.original;
+                                            setTempPhraseVariation(approvedText);
+                                            toast.info(`Applied approved greeting: "${approvedText}"`);
                                           }
+                                        }}
+                                        disabled={isPatching !== null}
+                                      >
+                                        <CheckCircle2 className="w-4 h-4 mr-2" />
+                                        Use Auditor Approved Greeting Variation
+                                      </Button>
+                                    </div>
+                                  )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <div className="p-4 bg-slate-900/50 rounded-xl border border-slate-800/50 text-base leading-relaxed text-slate-400 flex flex-wrap gap-x-1.5 gap-y-1 max-h-[150px] overflow-y-auto custom-scrollbar">
+                          {wordAlignments.map((alignment, idx) => {
+                            const normTarget = normalizeForMatch(alignment.word);
+                            const isProperNoun = extractedNouns.some(n =>
+                              normalizeForMatch(n.original) === normTarget ||
+                              (n.selectedVariation && normalizeForMatch(n.selectedVariation) === normTarget) ||
+                              (n.customVariation && normalizeForMatch(n.customVariation) === normTarget)
+                            );
+
+                            return (
+                              <div key={idx} className="group/word relative py-1">
+                                <span
+                                  onClick={(e) => {
+                                    if (e.shiftKey) {
+                                      if (selectionStart === null) {
+                                        setSelectionStart(idx);
+                                      } else {
+                                        setSelectionEnd(idx);
+                                        // Initialize phrase variation with current words
+                                        const start = Math.min(selectionStart, idx);
+                                        const end = Math.max(selectionStart, idx);
+                                        const text = wordAlignments.slice(start, end + 1).map(a => a.word).join(" ");
+                                        setTempPhraseVariation(text);
+                                      }
+                                    } else {
+                                      setSelectionStart(idx);
+                                      setSelectionEnd(null);
+                                      // Initialize variation for single word selection
+                                      setTempPhraseVariation(alignment.word.replace(/[.,!?]$/, "").trim());
+
+                                      if (finalAudioRef.current) {
+                                        finalAudioRef.current.currentTime = alignment.start;
+                                        setCurrentTime(alignment.start);
+                                        if (!isPlayingFinal) {
+                                          finalAudioRef.current.play();
+                                          setIsPlayingFinal(true);
                                         }
                                       }
-                                    }}
-                                    className={`cursor-pointer transition-all px-1.5 rounded-lg hover:text-white hover:bg-slate-800 
+                                    }
+                                  }}
+                                  className={`cursor-pointer transition-all px-1.5 rounded-lg hover:text-white hover:bg-slate-800 
                                       ${currentWordIndex === idx ? "text-indigo-400 bg-indigo-500/10 font-bold scale-105" : "text-slate-400"} 
                                       ${isProperNoun ? "underline decoration-indigo-500/50 decoration-2 underline-offset-4" : ""}
                                       ${(selectionStart !== null && selectionEnd !== null) &&
-                                        ((idx >= Math.min(selectionStart, selectionEnd) && idx <= Math.max(selectionStart, selectionEnd)))
-                                        ? "bg-indigo-500/40 text-white ring-1 ring-indigo-500/50"
-                                        : selectionStart === idx ? "bg-indigo-500/20 text-white" : ""}
+                                      ((idx >= Math.min(selectionStart, selectionEnd) && idx <= Math.max(selectionStart, selectionEnd)))
+                                      ? "bg-indigo-500/40 text-white ring-1 ring-indigo-500/50"
+                                      : selectionStart === idx ? "bg-indigo-500/20 text-white" : ""}
                                     `}
-                                  >
-                                    {alignment.word}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
+                                >
+                                  {alignment.word}
+                                </span>
+                              </div>
+                            );
+                          })}
                         </div>
-                      )}
+                      </div>
+                    )}
 
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between text-xs font-medium text-slate-500">
-                          <span>{formatTime(currentTime)}</span>
-                          <span>{formatTime(duration)}</span>
-                        </div>
-                        <Slider
-                          value={[currentTime]}
-                          max={duration}
-                          step={0.1}
-                          onValueChange={([val]) => {
-                            if (finalAudioRef.current) {
-                              finalAudioRef.current.currentTime = val;
-                              setCurrentTime(val);
-                            }
-                          }}
-                          className="py-4"
-                        />
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between text-xs font-medium text-slate-500">
+                        <span>{formatTime(currentTime)}</span>
+                        <span>{formatTime(duration)}</span>
+                      </div>
+                      <Slider
+                        value={[currentTime]}
+                        max={duration}
+                        step={0.1}
+                        onValueChange={([val]) => {
+                          if (finalAudioRef.current) {
+                            finalAudioRef.current.currentTime = val;
+                            setCurrentTime(val);
+                          }
+                        }}
+                        className="py-4"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-6">
+                      <div className="flex items-center gap-4">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-10 w-10 rounded-full border-slate-800 text-slate-400 hover:text-white"
+                          onClick={() => skip10(false)}
+                        >
+                          <Rewind className="w-5 h-5 fill-current" />
+                        </Button>
+
+                        <Button
+                          onClick={handlePlayFinalAudio}
+                          disabled={isFinalLoading}
+                          className={`h-16 w-16 rounded-full flex items-center justify-center transition-all shadow-xl ${isPlayingFinal
+                            ? "bg-red-500/10 border border-red-500/50 text-red-400 hover:bg-red-500/20"
+                            : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
+                            }`}
+                        >
+                          {isFinalLoading ? (
+                            <Loader2 className="w-8 h-8 animate-spin" />
+                          ) : isPlayingFinal ? (
+                            <Pause className="w-8 h-8 fill-current" />
+                          ) : (
+                            <Play className="w-8 h-8 fill-current ml-1" />
+                          )}
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="h-10 w-10 rounded-full border-slate-800 text-slate-400 hover:text-white"
+                          onClick={() => skip10(true)}
+                        >
+                          <FastForward className="w-5 h-5 fill-current" />
+                        </Button>
+
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className={`h-10 w-10 rounded-full border-slate-800 transition-all ${finalAudioRef.current?.src ? "text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10" : "text-slate-700 opacity-50 cursor-not-allowed"}`}
+                          onClick={handleDownloadAudio}
+                          title="Download Audio"
+                        >
+                          <Download className="w-5 h-5 text-indigo-400" />
+                        </Button>
                       </div>
 
-                      <div className="flex flex-wrap items-center justify-between gap-6">
-                        <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+                        {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
                           <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10 rounded-full border-slate-800 text-slate-400 hover:text-white"
-                            onClick={() => skip10(false)}
-                          >
-                            <Rewind className="w-5 h-5 fill-current" />
-                          </Button>
-
-                          <Button
-                            onClick={handlePlayFinalAudio}
-                            disabled={isFinalLoading}
-                            className={`h-16 w-16 rounded-full flex items-center justify-center transition-all shadow-xl ${isPlayingFinal
-                              ? "bg-red-500/10 border border-red-500/50 text-red-400 hover:bg-red-500/20"
-                              : "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20"
+                            key={rate}
+                            variant="ghost"
+                            size="sm"
+                            className={`h-8 px-3 text-[10px] font-bold rounded-lg transition-all ${playbackRate === rate
+                              ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/20"
+                              : "text-slate-500 hover:text-slate-300"
                               }`}
+                            onClick={() => setPlaybackRate(rate)}
                           >
-                            {isFinalLoading ? (
-                              <Loader2 className="w-8 h-8 animate-spin" />
-                            ) : isPlayingFinal ? (
-                              <Pause className="w-8 h-8 fill-current" />
-                            ) : (
-                              <Play className="w-8 h-8 fill-current ml-1" />
-                            )}
+                            {rate}x
                           </Button>
-
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className="h-10 w-10 rounded-full border-slate-800 text-slate-400 hover:text-white"
-                            onClick={() => skip10(true)}
-                          >
-                            <FastForward className="w-5 h-5 fill-current" />
-                          </Button>
-
-                          <Button
-                            variant="outline"
-                            size="icon"
-                            className={`h-10 w-10 rounded-full border-slate-800 transition-all ${finalAudioRef.current?.src ? "text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/10" : "text-slate-700 opacity-50 cursor-not-allowed"}`}
-                            onClick={handleDownloadAudio}
-                            title="Download Audio"
-                          >
-                            <Download className="w-5 h-5 text-indigo-400" />
-                          </Button>
-                        </div>
-
-                        <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                          {[0.75, 1, 1.25, 1.5, 2].map((rate) => (
-                            <Button
-                              key={rate}
-                              variant="ghost"
-                              size="sm"
-                              className={`h-8 px-3 text-[10px] font-bold rounded-lg transition-all ${playbackRate === rate
-                                ? "bg-indigo-500/20 text-indigo-400 border border-indigo-500/20"
-                                : "text-slate-500 hover:text-slate-300"
-                                }`}
-                              onClick={() => setPlaybackRate(rate)}
-                            >
-                              {rate}x
-                            </Button>
-                          ))}
-                        </div>
+                        ))}
                       </div>
                     </div>
                   </div>
-                </Card>
-              )}
-            </section>
+                </div>
+              </Card>
+            )}
           </section>
-        ) : !isAnalyzing && (
+        )}
+
+        {extractedNouns.length === 0 && finalScript === null && !isAnalyzing && (
           <div className="flex flex-col items-center justify-center py-24 text-slate-600 border-2 border-dashed border-slate-900 rounded-3xl">
             <Search className="w-12 h-12 mb-4 opacity-10" />
             <p className="text-lg">Paste a script above to begin auditing.</p>

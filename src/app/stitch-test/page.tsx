@@ -3,9 +3,9 @@
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { stitchAudioFiles } from "@/lib/ffmpeg";
+import { stitchAudioFiles, spliceAudio } from "@/lib/ffmpeg";
 import { toast } from "sonner";
-import { Music, Plus, Trash2, Loader2, Play, Download, Upload, FileAudio, Link as LinkIcon, Code } from "lucide-react";
+import { Music, Plus, Trash2, Loader2, Play, Download, Upload, FileAudio, Link as LinkIcon, Code, Scissors } from "lucide-react";
 
 type AudioSourceType = "url" | "file" | "base64";
 
@@ -23,6 +23,14 @@ export default function AudioStitcherTest() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [resultUrl, setResultUrl] = useState<string | null>(null);
     const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({});
+
+    // Splice State
+    const [originalForSplice, setOriginalForSplice] = useState<File | null>(null);
+    const [patchForSplice, setPatchForSplice] = useState<File | null>(null);
+    const [spliceStart, setSpliceStart] = useState<string>("0");
+    const [spliceEnd, setSpliceEnd] = useState<string>("0");
+    const [spliceResultUrl, setSpliceResultUrl] = useState<string | null>(null);
+    const [isSplicing, setIsSplicing] = useState(false);
 
     const addSource = (type: AudioSourceType = "url") => {
         setSources([...sources, { id: Math.random().toString(36).substr(2, 9), type, value: "" }]);
@@ -61,6 +69,33 @@ export default function AudioStitcherTest() {
             toast.error("Failed to stitch audio files. Check console for details.");
         } finally {
             setIsProcessing(false);
+        }
+    };
+
+    const handleSplice = async () => {
+        if (!originalForSplice || !patchForSplice) {
+            toast.error("Please provide both original and patch audio files.");
+            return;
+        }
+
+        setIsSplicing(true);
+        try {
+            const start = parseFloat(spliceStart);
+            const end = parseFloat(spliceEnd);
+
+            if (isNaN(start) || isNaN(end)) {
+                toast.error("Invalid start or end time.");
+                return;
+            }
+
+            const result = await spliceAudio(originalForSplice, patchForSplice, start, end);
+            setSpliceResultUrl(result);
+            toast.success("Audio spliced successfully!");
+        } catch (error) {
+            console.error(error);
+            toast.error("Failed to splice audio. Check console.");
+        } finally {
+            setIsSplicing(false);
         }
     };
 
@@ -208,6 +243,108 @@ export default function AudioStitcherTest() {
                                         Download
                                     </a>
                                 </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+                )}
+            </div>
+
+            <div className="max-w-2xl mx-auto space-y-8 mt-20 border-t border-slate-800 pt-10">
+                <header>
+                    <h1 className="text-3xl font-bold flex items-center gap-3">
+                        <Scissors className="text-pink-400" />
+                        Audio Splice Test
+                    </h1>
+                    <p className="text-slate-400 italic">Test the 'spliceAudio' function logic directly.</p>
+                </header>
+
+                <Card className="bg-slate-900 border-slate-800">
+                    <CardContent className="p-6 space-y-6">
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase text-slate-500">Original Audio</label>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        className="w-full border-slate-800 text-slate-400"
+                                        onClick={() => document.getElementById("splice-original")?.click()}
+                                    >
+                                        <FileAudio className="w-4 h-4 mr-2" />
+                                        {originalForSplice ? originalForSplice.name : "Select Original"}
+                                    </Button>
+                                    <input
+                                        id="splice-original"
+                                        type="file"
+                                        accept="audio/*"
+                                        className="hidden"
+                                        onChange={(e) => setOriginalForSplice(e.target.files?.[0] || null)}
+                                    />
+                                </div>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase text-slate-500">Patch Audio</label>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        variant="outline"
+                                        className="w-full border-slate-800 text-slate-400"
+                                        onClick={() => document.getElementById("splice-patch")?.click()}
+                                    >
+                                        <FileAudio className="w-4 h-4 mr-2" />
+                                        {patchForSplice ? patchForSplice.name : "Select Patch"}
+                                    </Button>
+                                    <input
+                                        id="splice-patch"
+                                        type="file"
+                                        accept="audio/*"
+                                        className="hidden"
+                                        onChange={(e) => setPatchForSplice(e.target.files?.[0] || null)}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase text-slate-500">Start Time (s)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2"
+                                    value={spliceStart}
+                                    onChange={(e) => setSpliceStart(e.target.value)}
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-xs font-bold uppercase text-slate-500">End Time (s)</label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2"
+                                    value={spliceEnd}
+                                    onChange={(e) => setSpliceEnd(e.target.value)}
+                                />
+                            </div>
+                        </div>
+
+                        <Button
+                            className="w-full bg-pink-600 hover:bg-pink-700 h-12 text-lg font-bold"
+                            onClick={handleSplice}
+                            disabled={isSplicing}
+                        >
+                            {isSplicing ? <Loader2 className="animate-spin" /> : "Splice Audio"}
+                        </Button>
+                    </CardContent>
+                </Card>
+
+                {spliceResultUrl && (
+                    <Card className="bg-pink-500/5 border-pink-500/30">
+                        <CardHeader className="bg-pink-500/10 py-3">
+                            <CardTitle className="text-pink-400 text-sm font-bold uppercase">Result</CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-6">
+                            <audio src={spliceResultUrl} controls className="w-full" />
+                            <div className="mt-4 text-center">
+                                <a href={spliceResultUrl} download="spliced.mp3" className="text-pink-400 hover:underline text-sm">Download Spliced Audio</a>
                             </div>
                         </CardContent>
                     </Card>
