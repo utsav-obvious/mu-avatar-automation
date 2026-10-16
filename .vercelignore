@@ -1,0 +1,9 @@
+# Not needed at runtime — keep experiments, local tooling, secrets and student CSVs out of deployments.
+.env*
+c8-scripts/
+review-tool/
+v4-test/
+candidate-grid/
+join-test/
+*.wav
+*.mp3

@@ -1,0 +1,15 @@
+{
+  "_about": "Spellings you approved (★) in the candidate-grid test on eleven_multilingual_v2. spoken == term means 'approved as written — don't rewrite'.",
+  "entries": [
+    { "term": "Utkarsh", "spoken": "उत्कर्ष", "kind": "person" },
+    { "term": "Vidhi", "spoken": "विधि", "kind": "person" },
+    { "term": "Gaurav", "spoken": "गौरव", "kind": "person" },
+    { "term": "Priyadarshi", "spoken": "Priyadarshi", "kind": "person" },
+    { "term": "Atma Ram Sanatan Dharma College", "spoken": "आत्मा राम सनातन धर्म College", "kind": "org" },
+    { "term": "Shree Bhagwan Mahaveer Jain College", "spoken": "श्री भगवान महावीर जैन College", "kind": "org" },
+    { "term": "Jain University", "spoken": "Jain University", "kind": "org" },
+    { "term": "B.Com", "spoken": "B.Com", "kind": "acronym" },
+    { "term": "Masters’ Union", "spoken": "Masters Union", "kind": "org" },
+    { "term": "Masters' Union", "spoken": "Masters Union", "kind": "org" }
+  ]
+}

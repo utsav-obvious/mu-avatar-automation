@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pronunciation Candidate Grid</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #16181d; --muted: #6b7280; --line: #e5e7eb;
+    --ok: #15803d; --ok-bg: #dcfce7; --bad: #b91c1c; --bad-bg: #fee2e2; --accent: #4f46e5; --accent-bg: #eef2ff;
+    --best: #b45309; --best-bg: #fef3c7; --mark: #fef3c7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #181b21; --text: #e6e8eb; --muted: #9aa1ac; --line: #2a2f38;
+      --ok: #4ade80; --ok-bg: #12301f; --bad: #f87171; --bad-bg: #3a1717; --accent: #a5b4fc; --accent-bg: #23264a;
+      --best: #fbbf24; --best-bg: #3b2a0a; --mark: #4a3b10;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; }
+  .head-row { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  .save-state { font-size: 12px; color: var(--muted); }
+  .stats { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 10px; }
+  .stat { font-size: 12px; color: var(--muted); }
+  .stat b { display: block; font-size: 15px; color: var(--text); }
+  .tech { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .tech span { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); }
+  a.btn, button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 5px 10px; text-decoration: none; }
+  button:hover, a.btn:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+  .help { color: var(--muted); margin: 0 0 20px; }
+  h2 { font-size: 15px; margin: 28px 0 12px; color: var(--muted); font-weight: 600; }
+  .noun { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .noun-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .noun-head .name { font-size: 18px; font-weight: 700; }
+  .tag { font-size: 11px; padding: 0 7px; border-radius: 999px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+  .status { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .status.covered { color: var(--ok); }
+  .status.none { color: var(--bad); }
+  .target { margin: 6px 0 2px; }
+  .target b { color: var(--accent); }
+  .sentence { color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+  .cand { border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+  .cand.ok { border-color: var(--ok); background: var(--ok-bg); }
+  .cand.bad { border-color: var(--bad); background: var(--bad-bg); }
+  .cand.best { box-shadow: 0 0 0 2px var(--best); }
+  .cand.playing { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  .cand .text { font-size: 16px; font-weight: 600; word-break: break-word; }
+  .cand .technique { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row button { flex: 1; padding: 5px 6px; font-size: 13px; }
+  .row .play-name { background: var(--accent-bg); border-color: var(--accent); }
+  .row button.ok.on { background: var(--ok); border-color: var(--ok); color: #fff; }
+  .row button.bad.on { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .row button.best.on { background: var(--best); border-color: var(--best); color: #fff; }
+  .missing { font-size: 12px; color: var(--muted); font-style: italic; }
+  .note { margin-top: 12px; }
+  .note input { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  kbd { font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--bg); }
+  @media (max-width: 640px) { main { padding: 16px; } header { padding: 12px 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-row">
+    <h1>Pronunciation Candidate Grid <span class="tag" id="model"></span></h1>
+    <span class="save-state" id="saveState"></span>
+    <a class="btn" href="/results.csv">Export CSV</a>
+  </div>
+  <div class="stats" id="stats"></div>
+  <div class="tech" id="tech"></div>
+</header>
+<main>
+  <p class="help">For every noun, play each candidate (<b>▶ Name</b> plays just the name with a little lead-in; <b>▶ Sentence</b> plays the full sentence), then mark it <b>✓</b> or <b>✗</b>. Mark <b>every</b> candidate — that's what tells us coverage and which technique wins. Use <b>★</b> for the one you'd ship (it also counts as ✓).</p>
+  <div id="list"></div>
+</main>
+
+<script>
+let data, results;
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const entry = key => (results[key] ??= { marks: {}, best: null, note: "" });
+
+let saveTimer;
+function save() {
+  $("#saveState").textContent = "Saving…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await fetch("/results", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(results) });
+      $("#saveState").textContent = "Saved ✓";
+    } catch { $("#saveState").textContent = "Save failed!"; }
+  }, 300);
+}
+
+// ---- playback: one shared element, stop precisely at the end of the clip window ----
+const player = new Audio();
+let stopAt = null, playingEl = null, raf = null;
+function stop() {
+  player.pause();
+  stopAt = null;
+  cancelAnimationFrame(raf);
+  playingEl?.classList.remove("playing");
+  playingEl = null;
+}
+function watch() {
+  if (stopAt !== null && player.currentTime >= stopAt) return stop();
+  if (!player.paused) raf = requestAnimationFrame(watch);
+}
+async function play(src, from, to, el) {
+  stop();
+  if (!player.src.endsWith(src)) {
+    player.src = src;
+    await new Promise(r => player.addEventListener("loadedmetadata", r, { once: true }));
+  }
+  player.currentTime = Math.max(0, from);
+  stopAt = to ?? null;
+  playingEl = el;
+  el?.classList.add("playing");
+  await player.play();
+  watch();
+}
+player.addEventListener("ended", stop);
+
+// ---- stats ----
+function renderStats() {
+  let reviewed = 0, covered = 0, none = 0, origOk = 0, origMarked = 0;
+  const tech = {};
+  for (const n of data.nouns) {
+    const e = results[n.key];
+    const marks = n.candidates.map(c => e?.marks[c.text]);
+    for (const [i, c] of n.candidates.entries()) {
+      const t = (tech[c.technique] ??= { ok: 0, bad: 0, best: 0 });
+      if (marks[i] === "ok") t.ok++;
+      if (marks[i] === "bad") t.bad++;
+      if (e?.best === c.text) t.best++;
+      if (c.technique === "original" && marks[i]) { origMarked++; if (marks[i] === "ok") origOk++; }
+    }
+    if (marks.every(Boolean)) {
+      reviewed++;
+      if (marks.includes("ok")) covered++; else none++;
+    }
+  }
+  const pct = (a, b) => (b ? Math.round(100 * a / b) + "%" : "–");
+  $("#stats").innerHTML = `
+    <div class="stat">Nouns fully marked<b>${reviewed} / ${data.nouns.length}</b></div>
+    <div class="stat">Coverage — ≥1 candidate right<b>${pct(covered, reviewed)} <span style="font-weight:normal;color:var(--muted)">(${covered}/${reviewed})</span></b></div>
+    <div class="stat">No candidate worked<b>${none}</b></div>
+    <div class="stat">Original spelling right (v2 baseline)<b>${pct(origOk, origMarked)} <span style="font-weight:normal;color:var(--muted)">(${origOk}/${origMarked})</span></b></div>`;
+  $("#tech").innerHTML = Object.entries(tech)
+    .sort((a, b) => (b[1].ok / (b[1].ok + b[1].bad || 1)) - (a[1].ok / (a[1].ok + a[1].bad || 1)))
+    .map(([k, t]) => `<span><b>${esc(k)}</b> ${pct(t.ok, t.ok + t.bad)} right (${t.ok}/${t.ok + t.bad})${t.best ? ` · ★${t.best}` : ""}</span>`)
+    .join("");
+}
+
+// ---- noun cards ----
+function cardStatus(n) {
+  const e = results[n.key];
+  const marks = n.candidates.map(c => e?.marks[c.text]);
+  const done = marks.filter(Boolean).length;
+  if (done < marks.length) return { cls: "", text: `${done}/${marks.length} marked` };
+  return marks.includes("ok")
+    ? { cls: "covered", text: `✓ ${marks.filter(m => m === "ok").length} right${e.best ? " · ★ chosen" : ""}` }
+    : { cls: "none", text: "✗ no candidate worked" };
+}
+
+function refreshCard(n) {
+  const card = document.getElementById(`noun-${n.key}`);
+  const e = entry(n.key);
+  n.candidates.forEach((c, i) => {
+    const tile = card.querySelector(`[data-cand="${i}"]`);
+    const m = e.marks[c.text];
+    tile.classList.toggle("ok", m === "ok");
+    tile.classList.toggle("bad", m === "bad");
+    tile.classList.toggle("best", e.best === c.text);
+    tile.querySelector(".ok").classList.toggle("on", m === "ok");
+    tile.querySelector(".bad").classList.toggle("on", m === "bad");
+    tile.querySelector(".best").classList.toggle("on", e.best === c.text);
+  });
+  const st = cardStatus(n);
+  const el = card.querySelector(".status");
+  el.className = `status ${st.cls}`;
+  el.textContent = st.text;
+}
+
+function highlightSentence(sentence, noun) {
+  const i = sentence.indexOf(noun);
+  if (i < 0) return esc(sentence);
+  return esc(sentence.slice(0, i)) + `<mark>${esc(noun)}</mark>` + esc(sentence.slice(i + noun.length));
+}
+
+function render() {
+  let html = "", lastScript = null;
+  for (const n of data.nouns) {
+    if (n.scriptId !== lastScript) {
+      html += `<h2>${esc(n.studentName)} · ${esc(n.scriptId)}</h2>`;
+      lastScript = n.scriptId;
+    }
+    const e = entry(n.key);
+    html += `<section class="noun" id="noun-${esc(n.key)}">
+      <div class="noun-head">
+        <span class="name">${esc(n.original)}</span><span class="tag">${esc(n.kind)}</span>
+        <span class="status"></span>
+      </div>
+      <div class="target">Should sound like: <b>${esc(n.target)}</b></div>
+      <div class="sentence">${highlightSentence(n.sentence, n.original)}</div>
+      <div class="grid">
+        ${n.candidates.map((c, i) => `
+          <div class="cand" data-cand="${i}">
+            <div class="technique">${esc(c.technique)}</div>
+            <div class="text">${esc(c.text)}</div>
+            ${c.audio ? `
+              <div class="row">
+                <button class="play-name" data-play="name" ${c.span ? "" : "disabled title='No timestamps for this clip'"}>▶ Name</button>
+                <button data-play="sentence">▶ Sentence</button>
+              </div>
+              <div class="row">
+                <button class="ok" data-mark="ok" title="Right">✓</button>
+                <button class="bad" data-mark="bad" title="Wrong">✗</button>
+                <button class="best" data-mark="best" title="Best — the one I'd ship">★</button>
+              </div>` : `<div class="missing">Not generated yet</div>`}
+          </div>`).join("")}
+      </div>
+      <div class="note"><input type="text" data-note placeholder="Notes — e.g. 'all stress the wrong syllable', 'Devanagari switches accent'…" value="${esc(e.note)}"></div>
+    </section>`;
+  }
+  $("#list").innerHTML = html;
+
+  for (const n of data.nouns) {
+    const card = document.getElementById(`noun-${n.key}`);
+    card.querySelectorAll("[data-cand]").forEach(tile => {
+      const c = n.candidates[tile.dataset.cand];
+      tile.querySelectorAll("[data-play]").forEach(b => b.onclick = () => {
+        if (b.dataset.play === "name") play(c.audio, c.span.start - 0.35, c.span.end + 0.3, tile);
+        else play(c.audio, 0, null, tile);
+      });
+      tile.querySelectorAll("[data-mark]").forEach(b => b.onclick = () => {
+        const e = entry(n.key);
+        if (b.dataset.mark === "best") {
+          e.best = e.best === c.text ? null : c.text;
+          if (e.best) e.marks[c.text] = "ok";
+        } else {
+          e.marks[c.text] = e.marks[c.text] === b.dataset.mark ? undefined : b.dataset.mark;
+          if (e.marks[c.text] !== "ok" && e.best === c.text) e.best = null;
+        }
+        refreshCard(n);
+        renderStats();
+        save();
+      });
+    });
+    card.querySelector("[data-note]").oninput = ev => { entry(n.key).note = ev.target.value; save(); };
+    refreshCard(n);
+  }
+}
+
+(async () => {
+  data = await (await fetch("/data")).json();
+  results = data.results || {};
+  $("#model").textContent = data.model;
+  render();
+  renderStats();
+})();
+</script>
+</body>
+</html>

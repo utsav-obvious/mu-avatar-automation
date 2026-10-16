@@ -1,0 +1,44 @@
+{
+  "name": "C8 R1 – Set 1",
+  "filePrefix": "C8-R1-Set1",
+  "csv": "c8-scripts/AI AVATAR__C8 R1 - SET 1.csv",
+  "_nouns": [
+    "spoken  = what is sent by default (omit to keep as written). The pronunciation library wins over this.",
+    "options = alternatives offered as one-click chips in the Fix panel (the default and the original spelling are added automatically).",
+    "Rule of thumb from candidate-grid/: Devanagari for Indian names, letters for acronyms, respellings last."
+  ],
+  "nouns": {
+    "Raushan": { "kind": "person", "spoken": "रौशन", "options": ["Rau-shun", "Row-shun"] },
+    "Kavya": { "kind": "person", "spoken": "काव्या", "options": ["Kaav-ya", "Kaa-vya"] },
+    "Utkarsh": { "kind": "person", "options": ["Ut-kursh"] },
+    "Nikhil": { "kind": "person", "spoken": "निखिल", "options": ["Ni-khil"] },
+    "Shristi": { "kind": "person", "spoken": "सृष्टि", "options": ["श्रिस्टी", "Srish-ti"] },
+    "Vidhi": { "kind": "person", "options": ["Vi-dhi"] },
+    "Gaurav": { "kind": "person", "options": ["Gow-rav"] },
+    "Priyadarshi": { "kind": "person", "options": ["प्रियदर्शी", "Pri-ya-dur-shee"] },
+    "Subodh Kar": { "kind": "person", "spoken": "सुबोध कर", "options": ["Su-bodh Kar"] },
+
+    "Atma Ram Sanatan Dharma College": { "kind": "org", "options": ["Aatma Raam Sanaatan Dharm College"] },
+    "Shree Bhagwan Mahaveer Jain College": { "kind": "org", "options": ["Shri Bhagwaan Mahaaveer Jain College"] },
+    "Jain University": { "kind": "org", "options": ["जैन University", "Jehn University"] },
+    "St Anthonys Junior College": { "kind": "org", "spoken": "Saint Anthony's Junior College", "options": ["Saint Antonys Junior College"] },
+    "Baldwin Academy": { "kind": "org", "options": ["Bald-win Academy"] },
+    "Delhi": { "kind": "place", "options": ["दिल्ली", "Dilli"] },
+    "Masters’ Union": { "kind": "org", "options": ["Maasters Union"] },
+    "Purepicked": { "kind": "org", "options": ["Pure-picked", "Pure Picked"] },
+    "Gradnext": { "kind": "org", "options": ["Grad-next", "Grad Next"] },
+    "Zeltonic Solutions": { "kind": "org", "options": ["Zel-tonic Solutions", "Zell-tonik Solutions"] },
+    "Synaptic": { "kind": "org", "options": ["Sy-nap-tic", "Si-nap-tik"] },
+
+    "KIIT": { "kind": "acronym", "options": ["K I I T", "K.I.I.T.", "Kit"] },
+    "NMIMS": { "kind": "acronym", "options": ["N M I M S", "N.M.I.M.S.", "En-mims"] },
+    "EY": { "kind": "acronym", "options": ["E Y", "E.Y."] },
+    "CGPA": { "kind": "acronym", "options": ["C G P A", "C.G.P.A."] },
+    "GTM": { "kind": "acronym", "options": ["G T M", "G.T.M."] },
+    "CFA": { "kind": "acronym", "options": ["C F A", "C.F.A."] },
+    "BBA": { "kind": "acronym", "options": ["B B A", "B.B.A."] },
+    "B.tech": { "kind": "acronym", "options": ["B Tech", "बी.टेक"] },
+    "B.Com": { "kind": "acronym", "options": ["B Com", "बी.कॉम"] },
+    "B.com": { "kind": "acronym", "options": ["B Com", "बी.कॉम"] }
+  }
+}

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v4 Pronunciation Review</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #16181d; --muted: #6b7280; --line: #e5e7eb;
+    --ok: #15803d; --ok-bg: #dcfce7; --bad: #b91c1c; --bad-bg: #fee2e2; --accent: #4f46e5; --accent-bg: #eef2ff;
+    --mark: #fef3c7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --panel: #181b21; --text: #e6e8eb; --muted: #9aa1ac; --line: #2a2f38;
+      --ok: #4ade80; --ok-bg: #12301f; --bad: #f87171; --bad-bg: #3a1717; --accent: #a5b4fc; --accent-bg: #23264a;
+      --mark: #4a3b10;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 24px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 2; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; }
+  .stats { display: flex; gap: 20px; flex: 1; flex-wrap: wrap; }
+  .stat { font-size: 12px; color: var(--muted); }
+  .stat b { display: block; font-size: 15px; color: var(--text); }
+  .save-state { font-size: 12px; color: var(--muted); min-width: 60px; }
+  a.btn, button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--panel); color: var(--text); border-radius: 8px; padding: 6px 12px; text-decoration: none; }
+  button:hover, a.btn:hover { border-color: var(--accent); }
+  .layout { display: grid; grid-template-columns: 260px 1fr; min-height: calc(100vh - 64px); }
+  nav { border-right: 1px solid var(--line); padding: 12px; background: var(--panel); }
+  nav .item { padding: 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; }
+  nav .item:hover { background: var(--bg); }
+  nav .item.active { background: var(--accent-bg); }
+  nav .item .n { font-weight: 600; }
+  nav .item .sub { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; }
+  main { padding: 24px; max-width: 1100px; }
+  .title-row { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; }
+  .title-row h2 { margin: 0; font-size: 20px; }
+  .title-row .id { color: var(--muted); }
+  .title-row .spacer { flex: 1; }
+  .players { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .card h3 { margin: 0 0 10px; font-size: 14px; display: flex; justify-content: space-between; }
+  .card h3 small { font-weight: normal; color: var(--muted); }
+  audio { width: 100%; }
+  .speed { display: flex; gap: 6px; margin: 8px 0 12px; }
+  .speed button { padding: 2px 8px; font-size: 12px; }
+  .speed button.on { background: var(--accent-bg); border-color: var(--accent); }
+  .usable { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .usable span { font-weight: 600; }
+  .toggle button.ok.on { background: var(--ok-bg); border-color: var(--ok); color: var(--ok); }
+  .toggle button.bad.on { background: var(--bad-bg); border-color: var(--bad); color: var(--bad); }
+  .toggle { display: inline-flex; gap: 4px; }
+  textarea, input[type=text] { width: 100%; font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+  textarea { min-height: 54px; resize: vertical; }
+  details { margin-top: 10px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+  .script-text { white-space: pre-wrap; font-size: 13px; margin-top: 8px; max-height: 280px; overflow: auto; }
+  mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+  .empty { color: var(--muted); font-style: italic; padding: 20px 0; }
+  .meta { font-size: 11px; color: var(--muted); margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg); }
+  tr:last-child td { border-bottom: none; }
+  .noun { font-weight: 600; }
+  .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); margin-left: 4px; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  td input[type=text] { margin-top: 6px; font-size: 12px; padding: 4px 6px; }
+  .warn { background: var(--bad-bg); color: var(--bad); padding: 8px 12px; border-radius: 8px; margin-bottom: 12px; font-size: 13px; }
+  .help { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  @media (max-width: 800px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { border-right: none; border-bottom: 1px solid var(--line); }
+    .players { grid-template-columns: 1fr; }
+    main { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>v4 Pronunciation Review</h1>
+  <div class="stats" id="stats"></div>
+  <span class="save-state" id="saveState"></span>
+  <a class="btn" href="/results.csv">Export CSV</a>
+</header>
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+
+<script>
+const VARIANTS = ["raw", "rewritten"];
+const LABEL = { raw: "A · Raw script", rewritten: "B · Rewritten nouns" };
+let data, results, currentId;
+
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+function entry(id, v) {
+  results[id] ??= {};
+  results[id][v] ??= { nouns: {}, notes: {}, usable: null, comment: "" };
+  return results[id][v];
+}
+
+let saveTimer;
+function save() {
+  $("#saveState").textContent = "Saving…";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      await fetch("/results", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(results) });
+      $("#saveState").textContent = "Saved ✓";
+    } catch {
+      $("#saveState").textContent = "Save failed!";
+    }
+  }, 300);
+}
+
+function highlight(text, terms) {
+  const uniq = [...new Set(terms)].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (!uniq.length) return esc(text);
+  const re = new RegExp(uniq.map(escRe).join("|"), "gu");
+  let out = "", last = 0;
+  for (const m of text.matchAll(re)) {
+    out += esc(text.slice(last, m.index)) + `<mark>${esc(m[0])}</mark>`;
+    last = m.index + m[0].length;
+  }
+  return out + esc(text.slice(last));
+}
+
+function renderStats() {
+  const parts = [];
+  for (const v of VARIANTS) {
+    let ok = 0, bad = 0, yes = 0, no = 0;
+    for (const s of data.scripts) {
+      const e = results[s.id]?.[v];
+      if (!e) continue;
+      for (const n of s.nouns) { if (e.nouns[n.original] === "ok") ok++; if (e.nouns[n.original] === "bad") bad++; }
+      if (e.usable === "yes") yes++; if (e.usable === "no") no++;
+    }
+    const pct = ok + bad ? Math.round(100 * ok / (ok + bad)) + "%" : "–";
+    parts.push(`<div class="stat">${v === "raw" ? "A · Raw" : "B · Rewritten"}<b>${pct} nouns right <span style="font-weight:normal;color:var(--muted)">(${ok}/${ok + bad})</span></b>usable as-is: ${yes}/${yes + no} scripts</div>`);
+  }
+  let fixed = 0, broke = 0;
+  for (const s of data.scripts) {
+    const r = results[s.id];
+    if (!r) continue;
+    for (const n of s.nouns) {
+      const a = r.raw?.nouns[n.original], b = r.rewritten?.nouns[n.original];
+      if (a === "bad" && b === "ok") fixed++;
+      if (a === "ok" && b === "bad") broke++;
+    }
+  }
+  parts.push(`<div class="stat">Rewrite effect<b>${fixed} fixed · ${broke} broken</b>nouns wrong in A but right in B, and vice versa</div>`);
+  $("#stats").innerHTML = parts.join("");
+}
+
+function progress(s) {
+  let done = 0;
+  const total = s.nouns.length * VARIANTS.length + VARIANTS.length;
+  for (const v of VARIANTS) {
+    const e = results[s.id]?.[v];
+    if (!e) continue;
+    done += s.nouns.filter(n => e.nouns[n.original]).length + (e.usable ? 1 : 0);
+  }
+  return { done, total };
+}
+
+function renderNav() {
+  $("#nav").innerHTML = data.scripts.map(s => {
+    const hasAudio = VARIANTS.some(v => s.variants[v].hasAudio);
+    const { done, total } = progress(s);
+    const status = !hasAudio ? "no audio yet" : done === total ? "✓ reviewed" : `${done}/${total} marked`;
+    return `<div class="item ${s.id === currentId ? "active" : ""}" data-id="${s.id}" style="${hasAudio ? "" : "opacity:.55"}">
+      <div class="n">${esc(s.name)}</div>
+      <div class="sub"><span>${esc(s.id)}</span><span>${status}</span></div>
+    </div>`;
+  }).join("");
+  document.querySelectorAll("nav .item").forEach(el => el.onclick = () => select(el.dataset.id));
+}
+
+function toggleHtml(attrs, value) {
+  return `<span class="toggle">
+    <button class="ok ${value === "ok" ? "on" : ""}" ${attrs} data-val="ok" title="Pronounced right">✓ Right</button>
+    <button class="bad ${value === "bad" ? "on" : ""}" ${attrs} data-val="bad" title="Pronounced wrong">✗ Wrong</button>
+  </span>`;
+}
+
+function renderMain() {
+  const idx = data.scripts.findIndex(s => s.id === currentId);
+  const s = data.scripts[idx];
+  const anyAudio = VARIANTS.some(v => s.variants[v].hasAudio);
+
+  const players = VARIANTS.map(v => {
+    const info = s.variants[v];
+    const e = entry(s.id, v);
+    const terms = s.nouns.map(n => v === "raw" ? n.original : n.rewritten);
+    const meta = info.meta ? `${esc(info.meta.model)} via ${esc(info.meta.endpoint)} · ${new Date(info.meta.generatedAt).toLocaleString()}` : "";
+    return `<div class="card">
+      <h3>${LABEL[v]} <small>${v === "raw" ? "exact CSV text" : "nouns rewritten"}</small></h3>
+      ${info.hasAudio
+        ? `<audio controls preload="auto" id="audio-${v}" src="/audio/${s.id}/${v}.mp3?t=${info.mtime}"></audio>
+           <div class="speed" data-v="${v}">${[1, 1.25, 1.5].map(r => `<button data-rate="${r}" class="${r === 1 ? "on" : ""}">${r}×</button>`).join("")}</div>
+           <div class="usable"><span>Usable as-is?</span>${toggleHtml(`data-usable="${v}"`, e.usable === "yes" ? "ok" : e.usable === "no" ? "bad" : null).replace("✓ Right", "✓ Yes").replace("✗ Wrong", "✗ No")}</div>
+           <textarea data-comment="${v}" placeholder="Other issues (numbers, pacing, accent switching, tone)…">${esc(e.comment || "")}</textarea>
+           <div class="meta">${meta}</div>`
+        : `<div class="empty">Not generated yet — run<br><code>node v4-test/generate.mjs --ids ${esc(s.id)}</code></div>`}
+      <details><summary>Show text sent to ElevenLabs</summary><div class="script-text">${highlight(s.texts[v], terms)}</div></details>
+    </div>`;
+  }).join("");
+
+  const rows = s.nouns.map((n, i) => {
+    const cells = VARIANTS.map(v => {
+      const e = entry(s.id, v);
+      const val = e.nouns[n.original];
+      return `<td>${s.variants[v].hasAudio ? toggleHtml(`data-noun="${i}" data-v="${v}"`, val) : `<span class="hint">no audio</span>`}
+        <input type="text" data-note="${i}" data-v="${v}" placeholder="What did it sound like?" value="${esc(e.notes[n.original] || "")}" style="${val === "bad" ? "" : "display:none"}"></td>`;
+    }).join("");
+    return `<tr>
+      <td><span class="noun">${esc(n.original)}</span><span class="tag">${esc(n.kind)}</span>${n.note ? `<div class="hint">${esc(n.note)}</div>` : ""}</td>
+      <td>${n.rewritten === n.original ? `<span class="hint">unchanged</span>` : esc(n.rewritten)}<div class="hint">${esc(n.strategy)}</div></td>
+      ${cells}
+    </tr>`;
+  }).join("");
+
+  $("#main").innerHTML = `
+    <div class="title-row">
+      <h2>${esc(s.name)}</h2><span class="id">${esc(s.id)}</span><span class="spacer"></span>
+      <button id="prev" ${idx === 0 ? "disabled" : ""}>← Prev</button>
+      <button id="next" ${idx === data.scripts.length - 1 ? "disabled" : ""}>Next →</button>
+    </div>
+    ${s.missing.length ? `<div class="warn">These nouns were not found in the script text, so they weren't rewritten: ${s.missing.map(esc).join(", ")}</div>` : ""}
+    ${anyAudio ? `<p class="help">Listen to A and B, then mark each name below. Highlighted words in “Show text” are the ones being checked.</p>` : ""}
+    <div class="players">${players}</div>
+    <table>
+      <thead><tr><th>Noun</th><th>Sent in B as</th><th>A · Raw</th><th>B · Rewritten</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+
+  $("#prev").onclick = () => select(data.scripts[idx - 1].id);
+  $("#next").onclick = () => select(data.scripts[idx + 1].id);
+
+  document.querySelectorAll(".speed").forEach(group => {
+    group.querySelectorAll("button").forEach(b => b.onclick = () => {
+      $(`#audio-${group.dataset.v}`).playbackRate = Number(b.dataset.rate);
+      group.querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b));
+    });
+  });
+
+  // Only one player at a time.
+  document.querySelectorAll("audio").forEach(a => a.addEventListener("play", () => {
+    document.querySelectorAll("audio").forEach(o => { if (o !== a) o.pause(); });
+  }));
+
+  document.querySelectorAll("[data-noun]").forEach(b => b.onclick = () => {
+    const n = s.nouns[b.dataset.noun], e = entry(s.id, b.dataset.v);
+    e.nouns[n.original] = e.nouns[n.original] === b.dataset.val ? undefined : b.dataset.val;
+    b.parentElement.querySelectorAll("button").forEach(x => x.classList.toggle("on", x.dataset.val === e.nouns[n.original]));
+    const note = document.querySelector(`[data-note="${b.dataset.noun}"][data-v="${b.dataset.v}"]`);
+    note.style.display = e.nouns[n.original] === "bad" ? "" : "none";
+    if (e.nouns[n.original] === "bad") note.focus();
+    changed();
+  });
+
+  document.querySelectorAll("[data-usable]").forEach(b => b.onclick = () => {
+    const e = entry(s.id, b.dataset.usable);
+    const val = b.dataset.val === "ok" ? "yes" : "no";
+    e.usable = e.usable === val ? null : val;
+    b.parentElement.querySelectorAll("button").forEach(x => x.classList.toggle("on", (x.dataset.val === "ok" ? "yes" : "no") === e.usable));
+    changed();
+  });
+
+  document.querySelectorAll("[data-note]").forEach(inp => inp.oninput = () => {
+    entry(s.id, inp.dataset.v).notes[s.nouns[inp.dataset.note].original] = inp.value;
+    save();
+  });
+  document.querySelectorAll("[data-comment]").forEach(t => t.oninput = () => {
+    entry(s.id, t.dataset.comment).comment = t.value;
+    save();
+  });
+}
+
+function changed() { renderStats(); renderNav(); save(); }
+
+function select(id) {
+  currentId = id;
+  location.hash = id;
+  renderNav();
+  renderMain();
+}
+
+(async () => {
+  data = await (await fetch("/data")).json();
+  results = data.results || {};
+  renderStats();
+  const fromHash = location.hash.slice(1);
+  const firstWithAudio = data.scripts.find(s => VARIANTS.some(v => s.variants[v].hasAudio));
+  select(data.scripts.some(s => s.id === fromHash) ? fromHash : (firstWithAudio || data.scripts[0]).id);
+})();
+</script>
+</body>
+</html>
