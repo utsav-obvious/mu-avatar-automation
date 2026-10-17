@@ -109,7 +109,7 @@ When unsure, keep the original as `spoken` and put alternatives in `options` —
 | Sentence audio generation, browser cache, silence trimming, pauses | `src/app/review/audio.ts` — `PAUSE_SENTENCE = 0.5`, `PAUSE_PARAGRAPH = 0.6`, `MIN_SILENCE = 0.3`, `MAX_CONCURRENT = 5` |
 | ElevenLabs call (model, voice settings, neighbour context) | `src/app/review/api/tts/route.ts` |
 | Fix / Edit panel, prepared chips, "Ask Claude", Edit-mode `toSpoken` | `src/app/review/FixPanel.tsx` |
-| Screen, approve/download/reopen, delete+undo, change logging, reviewer name | `src/app/review/ReviewApp.tsx` (`PREFETCH_NEXT_SCRIPT` is off on purpose) |
+| Screen, approve/download/reopen, delete+undo, change logging, reviewer name | `src/app/review/ReviewApp.tsx` — Approve & download prepares the next unapproved script (the one "Next script" opens); `PREFETCH_NEXT_SCRIPT` (prepare on every open) stays off on purpose |
 | Server actions (save sentences, library, status, suggestions, logs) | `src/app/review/actions.ts` — "Ask Claude" uses `claude-opus-5-5`, low effort, `CLAUDEAPI_KEY` |
 | Passcode + Supabase client | `src/lib/review/server.ts` |
 | Text rules — names, numbers → words, Devanagari lead-ins (**one file, used by set prep and Edit mode**) | `src/lib/review/spoken-rules.mjs` |

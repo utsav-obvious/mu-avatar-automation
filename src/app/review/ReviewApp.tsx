@@ -13,8 +13,8 @@ import FixPanel, { type TakeInfo } from "./FixPanel";
 const SPEEDS = [1, 1.25, 1.5];
 // Full-listen rule: a sentence counts as heard once this share of it has played without skipping.
 const HEARD_SHARE = 0.9;
-// Preparing the next script in the background spends credits before anyone opens it.
-// Off until the tool is final; flip to true to re-enable.
+// Preparing the next script whenever one is opened spends credits before anyone listens. Off; instead,
+// Approve & download prepares the script that "Next script" opens (see approve()).
 const PREFETCH_NEXT_SCRIPT = false;
 
 const STATUS_STYLE: Record<ScriptStatus, { label: string; className: string }> = {
@@ -602,7 +602,14 @@ export default function ReviewApp({
             override(script.id, { full_listen: null });
             logChange(script, [{ action: "approve", sentence_index: null }]);
             setPatch({ scriptId: script.id, base: approvedAudio, sentences: script.sentences, changed: [] });
-            toast.success(`${script.student_name} approved and downloaded`);
+            // Prepare the script "Next script" opens, so it plays as soon as the reviewer gets there.
+            const next = nextUnapproved;
+            if (next && !isLoaded(next)) {
+                loadScriptAudio(next)
+                    .then(() => setReady(prev => new Set(prev).add(next.id)))
+                    .catch(() => {}); // opening it retries and shows any error
+            }
+            toast.success(`${script.student_name} approved and downloaded${next ? ` · preparing ${next.student_name}` : ""}`);
             // Keep the exact clips, so a later fix regenerates only the changed sentence.
             storeClips(script.id, script.sentences, approvedAudio.clips, script.stored_clips ?? [])
                 .then(async keys => {
