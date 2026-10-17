@@ -11,6 +11,9 @@ import { audioFromDelivered, AuthError, fitToOriginal, hasStoredAudio, isLoaded,
 import FixPanel, { type TakeInfo } from "./FixPanel";
 
 const SPEEDS = [1, 1.25, 1.5];
+// A newly opened script starts playing after this beat (player only — the WAV is unchanged), so the
+// first words — usually the student's name — aren't missed while the reviewer's attention moves.
+const AUTOPLAY_DELAY_MS = 1000;
 // Full-listen rule: a sentence counts as heard once this share of it has played without skipping.
 const HEARD_SHARE = 0.9;
 // Preparing the next script whenever one is opened spends credits before anyone listens. Off; instead,
@@ -155,6 +158,8 @@ export default function ReviewApp({
     const audioRef = useRef<HTMLAudioElement>(null);
     const sentenceRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const autoplayRef = useRef(false);
+    const autoplayTimerRef = useRef<number | null>(null);
+    const [startingSoon, setStartingSoon] = useState(false);
     const resumeAtRef = useRef<number | null>(null); // sentence to seek to once rebuilt audio loads
 
     const allScripts = useMemo(
@@ -352,8 +357,17 @@ export default function ReviewApp({
         resetListening();
     };
 
+    // Stops a pending delayed start (the reviewer moved on, or started playback themselves).
+    const cancelAutoplay = useCallback(() => {
+        if (autoplayTimerRef.current !== null) window.clearTimeout(autoplayTimerRef.current);
+        autoplayTimerRef.current = null;
+        setStartingSoon(false);
+    }, []);
+    useEffect(() => cancelAutoplay, [cancelAutoplay]);
+
     const openScript = (script: ReviewScript) => {
         if (script.id === activeScriptId || !confirmLeavePatch()) return;
+        cancelAutoplay();
         leavePatch();
         audioRef.current?.pause();
         setActiveScriptId(script.id);
@@ -373,6 +387,7 @@ export default function ReviewApp({
 
     const openSet = (setId: string) => {
         if (setId === activeSetId || !confirmLeavePatch()) return;
+        cancelAutoplay();
         leavePatch();
         audioRef.current?.pause();
         setActiveSetId(setId);
@@ -393,9 +408,10 @@ export default function ReviewApp({
     const togglePlay = useCallback(() => {
         const el = audioRef.current;
         if (!el || !audio) return;
+        cancelAutoplay();
         if (el.paused) el.play().catch(() => {});
         else el.pause();
-    }, [audio]);
+    }, [audio, cancelAutoplay]);
 
     const playSentence = useCallback((i: number) => {
         const el = audioRef.current;
@@ -405,10 +421,11 @@ export default function ReviewApp({
             toast.info(`Listen in order — no skipping ahead. Carry on from sentence ${reached.index + 1}.`);
             return;
         }
+        cancelAutoplay();
         el.currentTime = audio.starts[idx];
         setCurrentTime(audio.starts[idx]);
         el.play().catch(() => {});
-    }, [audio, lockedFrom, reached.index]);
+    }, [audio, lockedFrom, reached.index, cancelAutoplay]);
 
     const changeRate = (r: number) => {
         setRate(r);
@@ -1063,7 +1080,7 @@ export default function ReviewApp({
                                         <Button size="icon-sm" variant="ghost" onClick={() => playSentence((currentIdx ?? 0) - 1)} aria-label="Previous sentence"><ChevronUp /></Button>
                                         <Button size="icon-sm" variant="ghost" onClick={() => playSentence((currentIdx ?? 0) + 1)} aria-label="Next sentence"><ChevronDown /></Button>
                                         <span className="text-xs tabular-nums text-slate-400 w-20 text-center shrink-0">
-                                            {formatTime(currentTime)} / {formatTime(audio.duration)}
+                                            {startingSoon ? "Starting…" : `${formatTime(currentTime)} / ${formatTime(audio.duration)}`}
                                         </span>
                                         <input
                                             type="range"
@@ -1247,7 +1264,14 @@ export default function ReviewApp({
                     }
                     if (!autoplayRef.current) return;
                     autoplayRef.current = false;
-                    e.currentTarget.play().catch(() => {});
+                    const el = e.currentTarget;
+                    cancelAutoplay();
+                    setStartingSoon(true);
+                    autoplayTimerRef.current = window.setTimeout(() => {
+                        autoplayTimerRef.current = null;
+                        setStartingSoon(false);
+                        el.play().catch(() => {});
+                    }, AUTOPLAY_DELAY_MS);
                 }}
                 onPlay={() => setPlaying(true)}
                 onPause={() => { setPlaying(false); if (audioRef.current) setCurrentTime(audioRef.current.currentTime); }}

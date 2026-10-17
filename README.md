@@ -82,7 +82,7 @@ node review-tool/cli/prepare-set.mjs review-tool/sets/<slug>.json --upload   # c
 ## Reviewing (for reviewers)
 
 - Open `/review`, enter the passcode, enter your name (asked once per browser).
-- Pick a set tab → a script. Audio prepares in a few seconds and plays; the current sentence is highlighted.
+- Pick a set tab → a script. Audio prepares in a few seconds and starts playing after a one-second beat (so you catch the name); the current sentence is highlighted.
 - **Space** play/pause · **↑ ↓** previous/next sentence · **F** fix · **E** edit · click a sentence to play from there.
 - **Fix** — click a spelling chip for any name in the sentence (or "Ask Claude" for other words) → *Generate new take* → *Keep new*. Tick *Save to library* so future sets get it right.
 - **Edit** — rewrite the sentence; name spellings and number readings are re-applied automatically.
