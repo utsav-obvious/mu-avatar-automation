@@ -82,12 +82,12 @@ node review-tool/cli/prepare-set.mjs review-tool/sets/<slug>.json --upload   # c
 ## Reviewing (for reviewers)
 
 - Open `/review`, enter the passcode, enter your name (asked once per browser).
-- Pick a set tab → a script. Audio prepares in a few seconds and plays; the current sentence is highlighted.
+- Pick a set tab → a script. Audio prepares in a few seconds and starts playing after a one-second beat (so you catch the name); the current sentence is highlighted.
 - **Space** play/pause · **↑ ↓** previous/next sentence · **F** fix · **E** edit · click a sentence to play from there.
 - **Fix** — click a spelling chip for any name in the sentence (or "Ask Claude" for other words) → *Generate new take* → *Keep new*. Tick *Save to library* so future sets get it right.
 - **Edit** — rewrite the sentence; name spellings and number readings are re-applied automatically.
 - **Delete** — removes a sentence (Undo for 10 s).
-- **Approve & download** — downloads the WAV and marks the script approved (its audio is stored for later patches). Approved scripts don't regenerate audio when opened.
+- **Approve & download** — downloads the WAV and marks the script approved (its audio is stored for later patches), and starts preparing the next unapproved script so *Next script* plays straight away. Approved scripts don't regenerate audio when opened.
 - **Red "Listen to the whole script" box** — the script was regenerated after it was delivered, so *any* sentence may sound different now, not only the one you fix. Play it through: you can go back but not skip ahead, and Approve (or *Confirm full listen*) unlocks once every sentence has been heard. Sentence numbers turn green as you hear them.
 - **Patch an approved script** (e.g. client feedback, shown in an amber box with suggested fixes):
   1. Open it — the approved audio loads from storage. Older scripts: drop in the WAV that was downloaded for it (it stays in your browser; the tool refuses a file whose pauses don't match the script).
