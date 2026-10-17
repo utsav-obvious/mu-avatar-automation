@@ -136,13 +136,31 @@ Design invariants — keep them:
 
 ## Deploying app changes
 
+**Several sessions work on this repo at once** (the main folder plus `.claude/worktrees/*`), and each can push and deploy. `vercel deploy` uploads *your* working tree, so deploying from a copy that is missing someone else's pushed commits silently removes their fixes from production. On 17 Oct 2026 that happened: a deploy from a stale `v5` dropped "Approve & download prepares the next script" and the one-second start beat until they were merged back.
+
+**Before every deploy, sync with GitHub — and never deploy from a branch that is behind `origin/v5`:**
+
+```bash
+git fetch origin
+git status -sb                      # must NOT say "behind"; if it does:
+git merge origin/v5                 # (commit your own work first) — resolve, re-check, then continue
+git log --oneline origin/v5..HEAD   # your commits that are not on GitHub yet
+git log --oneline HEAD..origin/v5   # must print nothing
+```
+
+Then:
+
 ```bash
 npx tsc --noEmit -p . && npx eslint src/app/review src/lib/review
 npm run build
 vercel deploy --prod --yes          # ask the user first
 vercel inspect <deployment-url>     # confirm "Ready" and aliased to mu-avatar-automation.vercel.app
+git push origin v5                  # push what you deployed, so the next session starts from it
 ```
-The deploy uploads the working tree (minus `.vercelignore`), so any uncommitted change to the legacy tool goes live too — mention it.
+
+- Commit before deploying, and push right after — what is live should always be on `origin/v5`.
+- Working in a worktree (`claude/*` branch)? Merge `origin/v5` in first, deploy, then push to `v5` (`git push origin HEAD:v5`) so the main folder and other sessions pick it up.
+- The deploy uploads the working tree (minus `.vercelignore`), so any uncommitted change — including to the legacy tool — goes live too. Mention it.
 The first `vercel deploy` often returns `"status": "error"` with no build error — just run it again; the retry has succeeded every time.
 
 ## Data & environment
