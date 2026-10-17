@@ -9,6 +9,7 @@ import type { ChangeLogEntry, LibraryEntry, ReviewScript, ReviewSet, ScriptStatu
 import { confirmFullListen, logChanges, markInReview, saveLibraryEntry, savePatch, saveSentences, setScriptStatus, setStoredClips } from "./actions";
 import { audioFromDelivered, AuthError, fitToOriginal, hasStoredAudio, isLoaded, loadScriptAudio, loadStoredAudio, parseWav, requestsFor, storeClips, withFreshUrl, type ScriptAudio } from "./audio";
 import FixPanel, { type TakeInfo } from "./FixPanel";
+import TryPronunciation from "./TryPronunciation";
 
 const SPEEDS = [1, 1.25, 1.5];
 // Full-listen rule: a sentence counts as heard once this share of it has played without skipping.
@@ -767,6 +768,9 @@ export default function ReviewApp({
                             <button onClick={() => { setNameDraft(reviewer); writeReviewer(""); }} className="ml-2 text-indigo-400 hover:text-indigo-300">change</button>
                         </span>
                     )}
+                </div>
+                <div className="px-4 lg:px-6 mt-3">
+                    <TryPronunciation pauseMain={() => audioRef.current?.pause()} onAuthError={handleAuthError} />
                 </div>
                 <nav className="px-4 lg:px-6 flex gap-1 overflow-x-auto mt-3" aria-label="Sets">
                     {sets.map(set => {

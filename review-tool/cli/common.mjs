@@ -45,7 +45,11 @@ export function parseCsv(text) {
         } else field += c;
     }
     if (field || row.length) { row.push(field); rows.push(row); }
-    const [header, ...body] = rows.filter(r => r.some(f => f.trim()));
+    // Some sheets export with a blank header row (",,") — assume the standard 3 columns then.
+    const blankHeader = rows.length && rows[0].every(f => !f.trim());
+    const [header, ...body] = blankHeader
+        ? [["Application Number", "Name", "Founder Message"], ...rows.slice(1).filter(r => r.some(f => f.trim()))]
+        : rows.filter(r => r.some(f => f.trim()));
     return body.map(r => Object.fromEntries(header.map((h, i) => [h.trim(), r[i] ?? ""])));
 }
 
