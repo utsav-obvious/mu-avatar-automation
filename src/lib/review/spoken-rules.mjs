@@ -90,6 +90,7 @@ export function softenPauses(text) {
         .replace(/\s*(?:…|\.{3})\s*$/, ".")
         .replace(/\s*(?:…|\.{3})\s*/g, ", ")
         .replace(/\s*—\s*/g, ", ")
+        .replace(/\s+–\s+/g, ", ") // spaced en dash, used like an em dash ("marks – 10 CGPA – highlight")
         .replace(/,\s*([,.!?])/g, "$1");
 }
 
@@ -117,25 +118,36 @@ const SLOT = /\u0000([-])\u0001/g;
  */
 export function toSpoken(text, spellings) {
     const used = [];
-    const slots = [];
+    const slots = []; // { term, spoken }
     let out = text;
     const terms = [...spellings.keys()].sort((a, b) => b.length - a.length);
     for (const term of terms) {
         const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
         out = out.replace(new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, "gu"), () => {
             if (spellings.get(term) !== term) used.push(term);
-            slots.push(spellings.get(term));
+            slots.push({ term, spoken: spellings.get(term) });
             return slotMarker(slots.length - 1);
         });
     }
+    // A name addressed at the end of a sentence ("…family, Jai!", "…aboard, Nitin!", "…family, Hrishikesh —")
+    // keeps its English spelling: in Sets 6–7 reviewers deleted or anglicised the Devanagari there 3 times.
+    out = out.replace(new RegExp(String.raw`, \u0000([\ue000-\uf8ff])\u0001(?=\s*(?:[!.?…—]|\.\.\.|$))`, "g"), (m, c) => {
+        const slot = slots[c.charCodeAt(0) - 0xe000];
+        if (!/[\u0900-\u097F]/.test(slot.spoken) || /\s/.test(slot.term)) return m;
+        used.push(`${slot.term} (English when addressed)`);
+        return `, ${slot.term}`;
+    });
     const withWords = numbersToWords(out);
     if (withWords !== out) used.push("numbers → words");
-    out = withWords.replace(SLOT, (_, c) => numbersToWords(slots[c.charCodeAt(0) - 0xe000]));
+    out = withWords.replace(SLOT, (_, c) => numbersToWords(slots[c.charCodeAt(0) - 0xe000].spoken));
     const withLeadIns = devanagariLeadIns(out);
     if (withLeadIns !== out) used.push("Devanagari lead-in");
     const softened = softenPauses(withLeadIns);
     if (softened !== withLeadIns) used.push("dash/ellipsis → comma");
-    return { spoken: softened, used };
+    // Emoji ("✨ Welcome to…") would be read aloud or stumbled over.
+    const clean = softened.replace(/\p{Extended_Pictographic}\uFE0F?\s*/gu, "").trim();
+    if (clean !== softened) used.push("emoji removed");
+    return { spoken: clean, used };
 }
 
 /** Reviewer-saved library entries like "94.4" or "87 % and 86 %" — superseded by numbersToWords(). */

@@ -45,12 +45,13 @@ export function parseCsv(text) {
         } else field += c;
     }
     if (field || row.length) { row.push(field); rows.push(row); }
-    // Some sheets export with a blank header row (",,") — assume the standard 3 columns then.
-    const blankHeader = rows.length && rows[0].every(f => !f.trim());
-    const [header, ...body] = blankHeader
-        ? [["Application Number", "Name", "Founder Message"], ...rows.slice(1).filter(r => r.some(f => f.trim()))]
-        : rows.filter(r => r.some(f => f.trim()));
-    return body.map(r => Object.fromEntries(header.map((h, i) => [h.trim(), r[i] ?? ""])));
+    // Some sheets export with the first three header cells blank (",," or ",,,correct") — name them
+    // as the standard columns and keep any other headers.
+    const STANDARD = ["Application Number", "Name", "Founder Message"];
+    const blankFirst3 = rows.length && rows[0].length >= 3 && rows[0].slice(0, 3).every(f => !f.trim());
+    const [first, ...rest] = rows.filter((r, i) => (blankFirst3 && i === 0) || r.some(f => f.trim()));
+    const header = blankFirst3 ? first.map((h, i) => (i < 3 ? STANDARD[i] : h)) : first;
+    return rest.map(r => Object.fromEntries(header.map((h, i) => [h.trim(), r[i] ?? ""])));
 }
 
 export function arg(name) {
