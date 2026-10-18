@@ -69,27 +69,46 @@ const scripts = new Set(rows.map(r => r.application_number));
 console.log(`\n${rows.length} logged actions · ${scripts.size} scripts · ${rows[0].created_at.slice(0, 10)} → ${rows.at(-1).created_at.slice(0, 10)}`);
 console.log(`Actions:   ${[...byAction].map(([k, v]) => `${k} ${v}`).join(" · ")}`);
 console.log(`Reviewers: ${[...byReviewer].map(([k, v]) => `${k} ${v}`).join(" · ")}`);
+const perReviewer = new Map();
+for (const r of rows) {
+    const e = perReviewer.get(r.reviewer ?? "unknown") ?? { takes: 0, scripts: new Set() };
+    if (r.action === "take") e.takes++;
+    e.scripts.add(r.application_number);
+    perReviewer.set(r.reviewer ?? "unknown", e);
+}
+console.log(`Takes per script: ${[...perReviewer].map(([k, e]) => `${k} ${(e.takes / e.scripts.size).toFixed(1)}`).join(" · ")}   (compare reviewers before blaming a rule)`);
 
 // ---- kept changes, grouped into patterns ----
 const kept = rows.filter(r => r.action === "fix" || r.action === "edit");
 const keptTakes = new Set(kept.map(r => r.take_id).filter(Boolean));
-const patterns = new Map(); // "removed → added" → { tag, count, examples }
+const patterns = new Map(); // "removed → added" → { tag, count, scripts, reviewers, sets, removed, added }
 for (const r of kept) {
     for (const h of diff(r.before_spoken, r.after_spoken)) {
         const key = `${h.removed || "∅"}  →  ${h.added || "∅"}`;
-        const p = patterns.get(key) ?? { tag: classify(h), count: 0, scripts: new Set() };
+        const p = patterns.get(key) ?? { tag: classify(h), count: 0, scripts: new Set(), reviewers: new Set(), sets: new Set(), removed: h.removed, added: h.added };
         p.count++;
         p.scripts.add(r.application_number);
+        p.reviewers.add(r.reviewer ?? "unknown");
+        p.sets.add(r.set_name ?? "?");
         patterns.set(key, p);
     }
 }
+// Rule-change policy (CLAUDE.md): a pattern is rule-ready only with enough, consistent, multi-reviewer evidence.
+const RULE_READY = { count: 5, reviewers: 2, sets: 2 };
+const reversedCount = p => patterns.get(`${p.added || "∅"}  →  ${p.removed || "∅"}`)?.count ?? 0;
+const evidence = p => {
+    const rev = reversedCount(p);
+    const ready = p.count >= RULE_READY.count && p.reviewers.size >= RULE_READY.reviewers && p.sets.size >= RULE_READY.sets && rev * 3 <= p.count;
+    return `[${p.reviewers.size} reviewer${p.reviewers.size > 1 ? "s" : ""} · ${p.sets.size} set${p.sets.size > 1 ? "s" : ""}${rev ? ` · reversed ${rev}×` : ""}]${ready ? "  ✓ rule-ready" : ""}`;
+};
 console.log(`\n== Kept changes to the text sent to ElevenLabs (${kept.length} fixes/edits) ==`);
+console.log(`   ✓ rule-ready = ≥ ${RULE_READY.count}× by ≥ ${RULE_READY.reviewers} reviewers in ≥ ${RULE_READY.sets} sets, reversed ≤ ⅓ as often (see CLAUDE.md "Rule-change policy")`);
 const byTag = new Map();
 for (const [key, p] of patterns) byTag.set(p.tag, [...(byTag.get(p.tag) ?? []), [key, p]]);
 for (const [tag, list] of [...byTag].sort((a, b) => b[1].length - a[1].length)) {
     console.log(`\n[${tag}]`);
     for (const [key, p] of list.sort((a, b) => b[1].count - a[1].count)) {
-        console.log(`  ${String(p.count).padStart(3)}×  ${key}   (${[...p.scripts].join(", ")})`);
+        console.log(`  ${String(p.count).padStart(3)}×  ${key}   ${evidence(p)}   (${[...p.scripts].slice(0, 6).join(", ")}${p.scripts.size > 6 ? ", …" : ""})`);
     }
 }
 

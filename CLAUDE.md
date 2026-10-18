@@ -20,7 +20,7 @@ Input: a CSV in `c8-scripts/` with columns `Application Number`, `Name`, `Founde
    node review-tool/cli/changes.mjs          # grouped patterns of what reviewers changed, failed takes, deletions
    node review-tool/cli/library.mjs list     # approved spellings (applied automatically by prepare-set)
    ```
-   Turn repeated patterns into rules: a recurring text pattern → a rule in `src/lib/review/spoken-rules.mjs` (shared by set prep and the app's Edit mode — Edit mode only picks it up after a redeploy); a recurring name/acronym spelling → it's already in the library, or add options to the spec. Note new rules in **Learned rules** below. Look at kept fixes *and* the failed takes — many takes per fix means reviewers are struggling with something systematic.
+   Turn repeated patterns into rules **only when they pass the Rule-change policy below** (`✓ rule-ready` in the output): a recurring text pattern → a rule in `src/lib/review/spoken-rules.mjs` (shared by set prep and the app's Edit mode — Edit mode only picks it up after a redeploy); a recurring name/acronym spelling → it's already in the library, or add options to the spec. Note new rules in **Learned rules** below. Look at kept fixes *and* the failed takes — many takes per fix means reviewers are struggling with something systematic.
 
 2. **Read every script in the CSV** (`python3` + `csv.DictReader`, encoding `utf-8-sig`). List every person name (student first name after "Hey", interviewer after "spoke with"), institution, company, place and acronym.
 
@@ -69,6 +69,27 @@ Input: the set's CSV with a `comment` column (client QC on the videos) and "No r
    ```
 4. **Report:** per comment — what's wrong, root cause, the suggested text, and that the **video needs that sentence redone** (lip-sync / re-render is outside this repo). Reviewers then open the script: an approved script loads its stored clips (or they drop in the delivered WAV), *Use suggestion* → generate → keep → **Download patched (vN)**. Only the flagged sentences are regenerated; the script stays approved and gets a *Patched* tag.
 5. Add what you learned to **Learned rules** below.
+
+## Rule-change policy — change defaults only on consistent evidence
+
+The user's instruction (18 Oct 2026): *see a pattern first; change a rule only if the data shows many consistent changes, otherwise be smart.* Rules made from one reviewer's edits in one set have had to be walked back (the Devanagari lead-in).
+
+1. **The bar for a new or changed default rule:** the same kept change **≥ 5×, by ≥ 2 reviewers, in ≥ 2 sets, reversed at most ⅓ as often.** `node review-tool/cli/changes.mjs` prints the evidence per pattern (`[reviewers · sets · reversed N×]`) and marks those that pass `✓ rule-ready`. Client QC comments count as an extra reviewer.
+2. **Below the bar → don't change the default.** Use the smallest fix that helps: a library entry for that specific word (reviewers' own saves already do this), or an extra Fix-panel option in the next spec. Add it to **Watch list** below with its counts and re-check after the next set.
+3. **Contested (reviewers reverse each other) = taste, not a rule:** keep the default and offer both as one-click chips (see the lead-in chip row).
+4. **Re-takes of the same text are take variance, not a signal.** Check takes per script per reviewer first (`changes.mjs` prints it — Utsav 0.9, Kv 3.2, Shashwat 4.9, ABHAY 12.7): reviewer differences dwarf most rule effects.
+5. **Library entries for common words apply to every script** (e.g. `campus` → `कैम्पस` from one fix). Point them out to the user rather than relying on them silently.
+6. **After a rule ships, measure the next reviewed set** (takes per script, fixes touching that pattern, reversals). If it got worse or keeps being reversed, roll it back.
+7. **Record the evidence** (count, reviewers, sets, reversals) with every entry in Learned rules.
+
+### Watch list (below the bar — not rules yet)
+| Pattern | Evidence so far | Current handling |
+|---|---|---|
+| Indian city names → Devanagari | Kv 4× in Set 8 (+ Ahmedabad 2× by 2 reviewers) — 1 main reviewer, 1 set | Applied as default in Set 10 **before this policy** — confirm with Set 10 reviews; revert to "English + Devanagari option" if reversed |
+| `Hey` → `हे` before a Devanagari name | ABHAY 7× in Set 3 — 1 reviewer, 1 set; reversed 2× (`हे कनिका` → `Hey Kanika`, `हे जीत` → `hey jeeth`) | Still an automatic rule from before this policy — candidate for the same chip treatment as the "spoke with" lead-in |
+| Addressed name at the end stays English | 3× across Sets 6–7, 2+ reviewers — below 5× | Automatic since Set 8 — keep measuring |
+| `campus` → `कैम्पस` (library) | 1 fix, 1 reviewer (Utsav) | Library entry → applies to every "campus" since Set 10 |
+| Symbiosis: `Sim-bio-sis` vs `सिम्बायोसिस` vs as written | contested: Shashwat `Sim-bio-sis`, then 2× `Sim-bio-sis` → `सिम्बायोसिस`, Kv saved it as written | Library has the last save; leave — chips cover it |
 
 ## Pronunciation rules (current)
 
