@@ -33,8 +33,12 @@ const nouns = new Map(); // term → { kind, spoken, options[] }
 for (const [term, n] of Object.entries(spec.nouns ?? {})) {
     nouns.set(term, { kind: n.kind ?? null, spoken: n.spoken ?? term, options: n.options ?? [] });
 }
+// Fixed phrases handled by the lead-in rule — a library entry for them would switch the rule off everywhere.
+const LEAD_IN_TERMS = new Set(["When you spoke with", "Hey"]);
+
 for (const e of library) {
     if (isNumberEntry(e.term)) continue; // numbers are handled by the number rule
+    if (LEAD_IN_TERMS.has(e.term)) continue;
     const n = nouns.get(e.term) ?? { kind: e.kind, spoken: e.term, options: [] };
     nouns.set(e.term, { ...n, spoken: e.spoken });
 }
@@ -93,6 +97,15 @@ const scripts = rows.map((r, position) => {
     const scriptNouns = [...nouns.entries()]
         .filter(([term]) => termRegex(term).test(original))
         .map(([term, n]) => ({ term, kind: n.kind, options: optionsFor(term, n) }));
+    // Reviewers disagree on the Devanagari lead-in (Set 8 reverted it ~13×): keep it as the default, but
+    // give a one-click chip row with English first. kind "lead-in" = never offered for the library.
+    if (sentences.some(x => x.spoken.includes("वेन यू स्पोक विद"))) {
+        scriptNouns.unshift({
+            term: "When you spoke with",
+            kind: "lead-in",
+            options: [{ text: "When you spoke with", label: "English" }, { text: "वेन यू स्पोक विद", label: "Devanagari" }],
+        });
+    }
     return {
         position,
         application_number: r["Application Number"].trim(),
@@ -109,6 +122,28 @@ for (const s of scripts) {
     console.log(`${s.application_number}  ${s.student_name}  (${s.sentences.length} sentences, ${s.nouns.length} nouns with options)`);
     console.log(`   changed: ${s.changes.length ? s.changes.join(", ") : "nothing"}`);
 }
+// Interviewer pronouns must agree across the set (Set 8 had Gurneesh as "he" in 8 scripts, "she"/"they" in 2).
+const pronouns = new Map(); // interviewer → { he|she|they: [students] }
+for (const s of scripts) {
+    const i = s.sentences.findIndex(x => /spoke with/.test(x.original));
+    if (i < 0) continue;
+    const who = s.sentences[i].original.match(/spoke with ([A-Z][a-z]+(?: [A-Z][a-z]+)?)/)?.[1];
+    if (!who) continue;
+    const after = s.sentences[i].original.split(who)[1] + " " + (s.sentences[i + 1]?.original ?? "");
+    const p = after.match(/\b(she|her|he|him|his|they|their)\b/i)?.[1].toLowerCase();
+    const g = !p ? null : ["she", "her"].includes(p) ? "she" : ["he", "him", "his"].includes(p) ? "he" : "they";
+    if (!g) continue;
+    const key = who.split(" ")[0];
+    const entry = pronouns.get(key) ?? {};
+    (entry[g] ??= []).push(`${s.application_number} ${s.student_name}`);
+    pronouns.set(key, entry);
+}
+for (const [who, byGender] of pronouns) {
+    if (Object.keys(byGender).length < 2) continue;
+    console.warn(`\n⚠️  ${who} is referred to inconsistently — fix the CSV wording (or Edit in /review) before reviewers start:`);
+    for (const [g, list] of Object.entries(byGender)) console.warn(`     "${g}" ×${list.length}: ${list.join(", ")}`);
+}
+
 const unused = Object.keys(spec.nouns ?? {}).filter(t => !scripts.some(s => s.nouns.some(n => n.term === t)));
 if (unused.length) console.warn(`\n⚠️  Nouns not found in any script: ${unused.join(", ")}`);
 

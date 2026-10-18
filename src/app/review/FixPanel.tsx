@@ -255,6 +255,7 @@ export default function FixPanel({
         if (current.text === option.text) return;
         setText(text.replace(wordRegex(current.text, "gu"), () => option.text));
         setTake(null);
+        if (noun.kind === "lead-in") return; // a library entry would switch the lead-in rule off for every set
         setLibTerm(noun.term);
         setLibSpoken(option.text);
         setSaveToLibrary(true);
