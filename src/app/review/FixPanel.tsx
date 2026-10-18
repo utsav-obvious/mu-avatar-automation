@@ -6,7 +6,7 @@ import { BookPlus, Check, Loader2, Play, Sparkles, Square, Wand2, X } from "luci
 import { Button } from "@/components/ui/button";
 import type { LibraryEntry, NounOptions, ReviewScript, Sentence, SpellingOption } from "@/lib/review/types";
 import { suggestSpellings } from "./actions";
-import { AuthError, generateSentence, requestsFor, spliceSentence, type ScriptAudio } from "./audio";
+import { AuthError, generateSentence, requestsFor, spliceSentence, TRIM_VERSION, type ScriptAudio } from "./audio";
 import { isNumberEntry, toSpoken as applyTextRules } from "@/lib/review/spoken-rules.mjs";
 
 interface Take {
@@ -39,7 +39,7 @@ function currentOption(noun: NounOptions, text: string): SpellingOption | null {
 function buildCandidate(sentences: Sentence[], index: number, original: string, spoken: string, seed: number): Sentence[] {
     const old = requestsFor(sentences);
     return sentences.map((s, i) => {
-        if (i === index) return { original, spoken, paragraph: s.paragraph, seed };
+        if (i === index) return { original, spoken, paragraph: s.paragraph, seed, trim_version: TRIM_VERSION };
         if (i === index - 1) return { ...s, next_context: old[i].nextText };
         if (i === index + 1) return { ...s, prev_context: old[i].previousText };
         return s;

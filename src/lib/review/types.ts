@@ -9,6 +9,9 @@ export interface Sentence {
     // reloading reproduces the exact take the reviewer heard instead of regenerating it.
     prev_context?: string;
     next_context?: string;
+    // How this sentence was trimmed in the delivered file (audio.ts TRIM_VERSION); absent = 1, before
+    // hiss detection. Stamped at approval and on a patched sentence, so stored clips rebuild it exactly.
+    trim_version?: number;
 }
 
 export interface LibraryEntry {

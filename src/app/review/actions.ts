@@ -45,7 +45,8 @@ const isSentence = (s: unknown): s is Sentence => {
     return typeof x?.original === "string" && typeof x.spoken === "string" && x.spoken.trim() !== ""
         && Number.isInteger(x.paragraph) && Number.isInteger(x.seed)
         && (x.prev_context === undefined || typeof x.prev_context === "string")
-        && (x.next_context === undefined || typeof x.next_context === "string");
+        && (x.next_context === undefined || typeof x.next_context === "string")
+        && (x.trim_version === undefined || Number.isInteger(x.trim_version));
 };
 
 export async function saveSentences(scriptId: string, sentences: Sentence[]): Promise<void> {
@@ -224,12 +225,23 @@ async function replaceStoredClips(scriptId: string, keys: string[]): Promise<voi
 }
 
 // Called after an approval's clips are uploaded: the script can now be patched without regenerating.
-export async function setStoredClips(scriptId: string, keys: string[]): Promise<void> {
+// Also stamps every sentence with the trim the approved file was made with (none from a client older
+// than hiss detection), so the stored clips rebuild that file exactly. Returns the stamped sentences.
+export async function setStoredClips(scriptId: string, keys: string[], trimVersion?: number): Promise<Sentence[]> {
     await requireAuth();
     if (!isClipKeys(keys)) throw new Error("Invalid clip keys.");
-    const { error } = await db().from("scripts").update({ stored_clips: keys }).eq("id", scriptId);
+    if (trimVersion !== undefined && !Number.isInteger(trimVersion)) throw new Error("Invalid trim version.");
+    const { data: current, error: readError } = await db().from("scripts").select("sentences").eq("id", scriptId).single();
+    if (readError) throw readError;
+    const sentences = (current.sentences as Sentence[]).map(s => {
+        const stamped: Sentence = { ...s, trim_version: trimVersion };
+        if (trimVersion === undefined) delete stamped.trim_version;
+        return stamped;
+    });
+    const { error } = await db().from("scripts").update({ stored_clips: keys, sentences }).eq("id", scriptId);
     if (error) throw error;
     await replaceStoredClips(scriptId, keys);
+    return sentences;
 }
 
 export interface PatchInput {

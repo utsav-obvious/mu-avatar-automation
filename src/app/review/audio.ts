@@ -17,6 +17,14 @@ const SOFT_DB = -55; // …but soft onsets/decays above this are kept, within th
 const LEAD_MIN = 0.03, LEAD_MAX = 0.15; // kept before speech: soft "h"/"s"/inhale onsets
 const TAIL_MIN = 0.08, TAIL_MAX = 0.12; // kept after speech, so word endings aren't clipped
 const FADE = 0.008; // fade at each cut so no sentence starts or ends with a click
+// An "s" is quieter than SPEECH_DB, and a stop can part it from its vowel with 30–60 ms of near-silence
+// ("Scoring", "results."), so the soft-onset walk stopped short and the hiss was cut: "Scoring" played as
+// "coring" (C8 R1 Set 8 — 28 of 32 stored "Scoring" clips). Hiss — ≥ 30 ms above HISS_DB with a high
+// zero-crossing rate, which room tone doesn't have — within HISS_REACH of the speech counts as speech.
+const HISS_DB = -50, HISS_ZCR = 0.2, HISS_REACH = 0.3;
+// Recorded on each sentence (Sentence.trim_version) when a script is approved or patched. Files delivered
+// before hiss detection have no mark and are rebuilt with the old trim, so patches keep every other sample.
+export const TRIM_VERSION = 2;
 const MAX_CONCURRENT = 5; // per browser; the ElevenLabs plan allows 15 across all reviewers
 const CACHE_VERSION = "mlv2-pcm44100-v1"; // bump if model/voice/settings change
 
@@ -208,27 +216,40 @@ interface Piece {
     tail: number; // seconds kept after speech ends
 }
 
-// Speech = ≥ 30 ms above SPEECH_DB, so isolated clicks don't count.
-function analyse(pcm: Int16Array) {
+// Speech = ≥ 30 ms above SPEECH_DB, so isolated clicks don't count; with `hiss`, nearby hiss too.
+function analyse(pcm: Int16Array, hiss = true) {
     const frame = Math.round(0.01 * SAMPLE_RATE);
     const frames = Math.floor(pcm.length / frame);
-    const db: number[] = [];
+    const db: number[] = [], zcr: number[] = [];
     for (let f = 0; f < frames; f++) {
-        let sum = 0;
-        for (let j = f * frame; j < (f + 1) * frame; j++) sum += pcm[j] * pcm[j];
+        let sum = 0, crossings = 0;
+        for (let j = f * frame; j < (f + 1) * frame; j++) {
+            sum += pcm[j] * pcm[j];
+            if (j > f * frame && (pcm[j] >= 0) !== (pcm[j - 1] >= 0)) crossings++;
+        }
         const rms = Math.sqrt(sum / frame) / 32768;
         db.push(rms > 0 ? 20 * Math.log10(rms) : -120);
+        zcr.push(crossings / (frame - 1));
     }
     const isSpeech = (f: number) => db[f] > SPEECH_DB && db[f + 1] > SPEECH_DB && db[f + 2] > SPEECH_DB;
+    const hissy = (f: number) => db[f] > HISS_DB && zcr[f] > HISS_ZCR;
+    const isHiss = (f: number) => hissy(f) && hissy(f + 1) && hissy(f + 2);
     let first = 0, last = frames - 1;
     while (first < frames - 2 && !isSpeech(first)) first++;
     while (last > first + 2 && !isSpeech(last - 2)) last--;
-    return { frame, frames, db, first, last, hasSpeech: first < frames - 2 };
+    const hasSpeech = first < frames - 2;
+    if (hiss && hasSpeech) {
+        const reach = Math.round(HISS_REACH / 0.01), onset = first, offset = last;
+        for (let f = onset - 3; f >= 0 && onset - f <= reach; f--) if (isHiss(f)) first = f;
+        for (let f = offset + 1; f < frames - 2 && f - offset <= reach; f++) if (isHiss(f)) last = f + 2;
+    }
+    return { frame, frames, db, first, last, hasSpeech };
 }
 
 // Keep the speech plus its soft onset/decay; cut breaths, room tone and padding beyond that.
-function trim(pcm: Int16Array): Piece {
-    const { frame, frames, db, first, last, hasSpeech } = analyse(pcm);
+// `hiss = false` is the trim files were delivered with before TRIM_VERSION 2.
+function trim(pcm: Int16Array, hiss = true): Piece {
+    const { frame, frames, db, first, last, hasSpeech } = analyse(pcm, hiss);
     if (!hasSpeech) return { pcm, lead: 0, tail: 0 }; // no speech detected — leave untouched
 
     // Walk outwards through soft sound, within the min/max margins.
@@ -314,7 +335,8 @@ const naturalGap = (prev: Piece, next: Piece, pause: number) =>
     Math.round(Math.max(MIN_SILENCE, pause - prev.tail - next.lead) * SAMPLE_RATE);
 
 export function joinSentences(clips: Int16Array[], sentences: Sentence[], source: AudioSource = "generated"): ScriptAudio {
-    const pieces = clips.map(trim);
+    // Stored clips rebuild a delivered file: trim each sentence the way it was trimmed then.
+    const pieces = clips.map((clip, i) => trim(clip, source !== "stored" || (sentences[i].trim_version ?? 1) >= 2));
     const gaps = pieces.map((piece, i) => (i === 0 ? 0 : naturalGap(pieces[i - 1], piece, pauseBefore(sentences, i))));
     return assemble(source, clips, pieces, gaps, 0);
 }

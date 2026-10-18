@@ -7,7 +7,7 @@ import { AlertCircle, ArrowRight, Check, CheckCircle2, ChevronDown, ChevronUp, C
 import { Button } from "@/components/ui/button";
 import type { ChangeLogEntry, LibraryEntry, ReviewScript, ReviewSet, ScriptStatus, Sentence } from "@/lib/review/types";
 import { confirmFullListen, logChanges, markInReview, saveLibraryEntry, savePatch, saveSentences, setScriptStatus, setStoredClips } from "./actions";
-import { audioFromDelivered, AuthError, fitToOriginal, hasStoredAudio, isLoaded, loadScriptAudio, loadStoredAudio, parseWav, requestsFor, storeClips, withFreshUrl, type ScriptAudio } from "./audio";
+import { audioFromDelivered, AuthError, fitToOriginal, hasStoredAudio, isLoaded, loadScriptAudio, loadStoredAudio, parseWav, requestsFor, storeClips, TRIM_VERSION, withFreshUrl, type ScriptAudio } from "./audio";
 import FixPanel, { type TakeInfo } from "./FixPanel";
 import TryPronunciation from "./TryPronunciation";
 
@@ -631,8 +631,8 @@ export default function ReviewApp({
             // Keep the exact clips, so a later fix regenerates only the changed sentence.
             storeClips(script.id, script.sentences, approvedAudio.clips, script.stored_clips ?? [])
                 .then(async keys => {
-                    await setStoredClips(script.id, keys);
-                    override(script.id, { stored_clips: keys });
+                    const sentences = await setStoredClips(script.id, keys, TRIM_VERSION);
+                    override(script.id, { stored_clips: keys, sentences });
                 })
                 .catch(err => {
                     if (err instanceof AuthError) return handleAuthError();
@@ -730,28 +730,30 @@ export default function ReviewApp({
         }
         const file = downloadName(sets.find(s => s.id === script.set_id), script, (script.patches?.length ?? 0) + 2);
         saveFile(out.url, file);
+        // Generated audio is trimmed the current way throughout; stored clips keep each sentence's own trim.
+        const sentences = p.base.source === "generated" ? p.sentences.map(s => ({ ...s, trim_version: TRIM_VERSION })) : p.sentences;
         setPatchBusy(true);
         try {
             // Stored-clip scripts get the new clips stored too; for an uploaded WAV only the text is saved.
             let stored: string[] | null = null;
             if (current.clips.every(c => c !== null)) {
-                stored = await storeClips(script.id, p.sentences, current.clips, script.stored_clips ?? [])
+                stored = await storeClips(script.id, sentences, current.clips, script.stored_clips ?? [])
                     .catch(err => {
                         if (err instanceof AuthError) throw err;
                         toast.warning("Patched audio couldn't be stored — patching again later will need this WAV.");
                         return null;
                     });
             }
-            const patches = await savePatch(script.id, p.sentences, {
+            const patches = await savePatch(script.id, sentences, {
                 sentences: p.changed,
                 length: keepLength ? "original" : "natural",
                 source: p.base.source,
                 file,
                 by: reviewer || "unknown",
             }, stored);
-            override(script.id, { sentences: p.sentences, patches, ...(stored ? { stored_clips: stored } : {}) });
+            override(script.id, { sentences, patches, ...(stored ? { stored_clips: stored } : {}) });
             setAudioUnlocked(null); // keep this audio; don't rebuild it from the saved text
-            setPatch({ scriptId: script.id, base: current, sentences: p.sentences, changed: [] });
+            setPatch({ scriptId: script.id, base: current, sentences, changed: [] });
             const changedSentences = p.changed.map(i => i + 1).join(", ");
             const delta = out.duration - p.base.duration;
             toast.success(`Saved ${file} · sentence${p.changed.length > 1 ? "s" : ""} ${changedSentences} replaced · ${Math.abs(delta) < 0.005 ? "same length" : `${delta > 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)} s`}`);
