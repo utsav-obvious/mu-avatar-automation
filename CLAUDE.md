@@ -84,7 +84,7 @@ Evidence: `candidate-grid/` (v2: Devanagari 9/9, respellings 5/21) and reviewer 
 | **Em dash / ellipsis** | **Comma (automatic)**; trailing ellipsis → full stop. They caused 1-second pauses and odd closing tone | `family — see you` → `family, see you`, `soon…` → `soon.` |
 | **Name addressed at the end of a sentence** | **English spelling (automatic)** — reviewers deleted or anglicised the Devanagari there 3× (Sets 6–7) | `…family, जय!` → `…family, Jai!`; greetings and "spoke with" keep Devanagari |
 | Emoji, spaced en dash | Emoji removed; ` – ` → comma (automatic) | `✨ Welcome…` → `Welcome…` |
-| **Lead-in before a Devanagari name** | **Devanagari (automatic)** — reviewers did this by hand 18× in Set 3 | `Hey विधि` → `हे विधि`, `When you spoke with गौरव` → `वेन यू स्पोक विद गौरव` |
+| **Lead-in before a Devanagari name** | **Devanagari (automatic)** — reviewers did this by hand 18× in Set 3. Reviewers disagree (Set 8 reverted ~13×), so per the user: **keep it as default, with a Fix-panel chip row offering English first** (`kind: "lead-in"`, added by `prepare-set.mjs`; never saved to the library) | `Hey विधि` → `हे विधि`, `When you spoke with गौरव` → `वेन यू स्पोक विद गौरव` |
 | Unusual acronyms | Spaced letters | `KIIT` → `K I I T`, `PSG` → `P S G` |
 | Common acronyms | Keep, with letter options | `CGPA`, `CFA`, `B.Com` |
 | Indian city names | Devanagari (Set 8 reviewer converted Ahmedabad, Indore, Chandigarh, Bhubaneswar) | `Kolkata` → `कोलकाता`, `University of Mumbai` → `University of मुंबई` |
